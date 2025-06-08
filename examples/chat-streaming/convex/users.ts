@@ -20,6 +20,6 @@ export const createUser = mutation({
   handler: async (ctx, args) => {
     // This is a placeholder, the actual user creation is handled by the auth provider
     // The name and email can be stored in a users table if needed
-    console.log("User created with name:", args.name, "and email:", args.email);
+    // User created with name and email
   },
 });

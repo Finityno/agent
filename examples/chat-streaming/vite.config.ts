@@ -10,4 +10,12 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    // Reduce logging verbosity
+    hmr: {
+      overlay: false
+    }
+  },
+  // Reduce build logging
+  logLevel: 'warn'
 });
