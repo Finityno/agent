@@ -1,4 +1,5 @@
-import { ContextOptions, StorageOptions } from "@convex-dev/agent";
+import { ContextOptions } from "@convex-dev/agent";
+import { StorageOptions } from "./index.js";
 
 // TODO: store preferences in local storage
 export const DEFAULT_CONTEXT_OPTIONS = {
@@ -14,5 +15,5 @@ export const DEFAULT_CONTEXT_OPTIONS = {
 } as const satisfies ContextOptions;
 
 export const DEFAULT_STORAGE_OPTIONS = {
-  saveMessages: "promptAndOutput",
+  save: "promptAndOutput",
 } as const satisfies StorageOptions;

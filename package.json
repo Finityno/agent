@@ -22,10 +22,10 @@
     "setup": "npm i && npm run build && cd example && npm i",
     "build": "npm run build:esm && npm run build:cjs",
     "build:watch": "cd src && npx chokidar '../tsconfig.json' '*.ts' 'react/**/*.ts' 'component/**/*.ts' 'client/**/*.ts' -c 'npm run build' --initial",
-    "build:esm": "tsc --project ./esm.json && npm run copy:dts:esm && echo '{\\n  \"type\": \"module\"\\n}' > dist/esm/package.json",
-    "build:cjs": "tsc --project ./commonjs.json && npm run copy:dts:cjs && echo '{\\n  \"type\": \"commonjs\"\\n}' > dist/commonjs/package.json",
-    "copy:dts:esm": "rsync -a --include='*/' --include='*.d.ts' --exclude='*' src/ dist/esm/",
-    "copy:dts:cjs": "rsync -a --include='*/' --include='*.d.ts' --exclude='*' src/ dist/commonjs/",
+    "build:esm": "tsc --project ./esm.json && npm run copy:dts:esm && echo \"{\\\"type\\\": \\\"module\\\"}\" > dist/esm/package.json",
+    "build:cjs": "tsc --project ./commonjs.json && npm run copy:dts:cjs && echo \"{\\\"type\\\": \\\"commonjs\\\"}\" > dist/commonjs/package.json",
+    "copy:dts:esm": "npx copyfiles -u 1 \"src/**/*.d.ts\" dist/esm/",
+    "copy:dts:cjs": "npx copyfiles -u 1 \"src/**/*.d.ts\" dist/commonjs/",
     "typecheck": "tsc --noEmit",
     "prepack": "node node10stubs.mjs",
     "postpack": "node node10stubs.mjs --cleanup",
@@ -119,5 +119,10 @@
   },
   "main": "./dist/commonjs/client/index.js",
   "types": "./dist/commonjs/client/index.d.ts",
-  "module": "./dist/esm/client/index.js"
+  "module": "./dist/esm/client/index.js",
+  "dependencies": {
+    "@convex-dev/agent": "^0.1.6",
+    "@convex-dev/agent-playground": "^0.0.14",
+    "zod": "^3.25.56"
+  }
 }

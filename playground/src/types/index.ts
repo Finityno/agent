@@ -1,9 +1,13 @@
 import {
   ContextOptions,
   MessageDoc,
-  StorageOptions,
+  StorageOptions as AgentStorageOptions,
   ThreadDoc,
 } from "@convex-dev/agent";
+
+export type StorageOptions = AgentStorageOptions & {
+  save?: "all" | "none" | "promptAndOutput";
+};
 
 export interface Agent {
   name: string;

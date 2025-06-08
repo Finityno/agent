@@ -9,6 +9,8 @@ dist-ssr
 explorations
 node_modules
 .eslintcache
+.bun
+bun
 # components are libraries!
 # package-lock.json
 
