@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "convex-helpers/react/cache";
+import { useConvexAuth, useQuery as useConvexQuery } from "convex/react";
 import {
   SidebarProvider,
   SidebarInset,
@@ -15,16 +15,19 @@ import { api } from "../convex/_generated/api";
 import "./ChatStreaming.css";
 
 export default function ChatStreaming() {
+  const { isAuthenticated, isLoading } = useConvexAuth();
   const [activeThreadId, setActiveThreadId] = useState<Id<"threads"> | null>(
     null,
   );
   const { chatId } = useParams<{ chatId?: string }>();
   const navigate = useNavigate();
 
-  // Get thread by UUID if chatId is provided
-  const threadByUuid = useQuery(
+  const shouldQueryThread = isAuthenticated && !isLoading && chatId;
+
+  // Get thread by UUID if chatId is provided - only query if authenticated and not loading
+  const threadByUuid = useConvexQuery(
     api.threads.getThreadByUuid,
-    chatId ? { uuid: chatId } : "skip",
+    shouldQueryThread ? { uuid: chatId } : "skip",
   );
 
   // This hook is now the source of truth for the active thread

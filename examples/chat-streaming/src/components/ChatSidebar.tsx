@@ -1,7 +1,6 @@
 "use client"
 
-import { useMutation } from "convex/react";
-import { useQuery } from "convex-helpers/react/cache";
+import { useMutation, useConvexAuth, useQuery as useConvexQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import {
@@ -38,11 +37,17 @@ export function ChatSidebar({
   activeThreadId,
   setActiveThreadId,
 }: ChatSidebarProps) {
+  const { isAuthenticated, isLoading } = useConvexAuth();
   const [isCreating, setIsCreating] = useState(false);
   
-  const threads = useQuery(api.threads.listThreadsByUserId, {
-    paginationOpts: { numItems: 50, cursor: null },
-  });
+  const shouldQueryThreads = isAuthenticated && !isLoading;
+  
+  const threads = useConvexQuery(
+    api.threads.listThreadsByUserId, 
+    shouldQueryThreads ? {
+      paginationOpts: { numItems: 50, cursor: null },
+    } : "skip"
+  );
   
   const createThread = useMutation(api.chatStreaming.createThread);
   const deleteThread = useMutation(api.threads.deleteThread);

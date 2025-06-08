@@ -22,15 +22,14 @@ import {
   Pencil,
   Trash,
 } from "lucide-react"
-import { ResponseStream } from "./ui/response-stream"
 import { useRef, memo, useMemo } from "react"
-import { useMutation } from "convex/react"
-import { useQuery } from "convex-helpers/react/cache";
+import { useMutation, useConvexAuth, useQuery as useConvexQuery } from "convex/react"
 import { api } from "../../convex/_generated/api"
 import { Id } from "../../convex/_generated/dataModel"
 import {
   useThreadMessages,
   toUIMessages,
+  useSmoothText,
 } from "@convex-dev/agent/react"
 
 interface ChatContentProps {
@@ -46,7 +45,13 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
 }) => {
   const isAssistant = message.role !== "user"
   const isLastMessage = index === uiMessagesLength - 1
-  const displayContent = message.content;
+  
+  // Always use useSmoothText for assistant messages - the hook will automatically
+  // detect when content is changing and apply smooth animation
+  const [smoothedContent] = useSmoothText(isAssistant ? (message.content || "") : "")
+  
+  // For assistant messages, use smoothed content; for user messages, use original content
+  const displayContent = isAssistant ? smoothedContent : message.content
 
   return (
     <Message
@@ -58,18 +63,12 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
     >
       {isAssistant ? (
         <div className="group flex w-full flex-col gap-0">
-          {(message as any).isStreaming ? (
-            <div className="text-foreground prose flex-1 rounded-lg bg-transparent p-0 ai-message-content">
-              <ResponseStream textStream={displayContent} as="div" />
-            </div>
-          ) : (
-            <MessageContent
-              className="text-foreground prose flex-1 rounded-lg bg-transparent p-0 ai-message-content"
-              markdown
-            >
-              {displayContent}
-            </MessageContent>
-          )}
+          <MessageContent
+            className="text-foreground prose flex-1 rounded-lg bg-transparent p-0 ai-message-content"
+            markdown
+          >
+            {displayContent}
+          </MessageContent>
           <MessageActions
             className={cn(
               "-ml-2.5 flex gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
@@ -111,7 +110,7 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
       ) : (
         <div className="group flex flex-col items-end gap-1">
           <MessageContent className="bg-muted text-primary max-w-[85%] rounded-3xl px-5 py-2.5 sm:max-w-[75%]">
-            {message.content}
+            {displayContent}
           </MessageContent>
           <MessageActions
             className={cn(
@@ -158,6 +157,8 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
 MemoizedMessage.displayName = "MemoizedMessage";
 
 function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  
   const threadMessagesOptions = useMemo(
     () => ({ initialNumItems: 10, stream: true }),
     [],
@@ -171,6 +172,8 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
     api.chatStreaming.sendMessageAndUpdateThread,
   ).withOptimisticUpdate((store, args) => {
     const { threadId, prompt } = args;
+    
+    // Update messages cache only - this is safe and doesn't require authentication
     const existingMessages = store.getQuery(api.chatStreaming.listThreadMessages, {
       threadId,
       paginationOpts: { numItems: 10, cursor: null },
@@ -207,34 +210,9 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
         },
       );
     }
-    const existing = store.getQuery(api.threads.listThreadsByUserId, {
-      paginationOpts: { numItems: 50, cursor: null },
-    });
-    if (existing) {
-      const existingThread = existing.page.find((t: any) => t._id === args.threadId);
-      if (existingThread) {
-        store.setQuery(
-          api.threads.listThreadsByUserId,
-          { paginationOpts: { numItems: 50, cursor: null } },
-          {
-            ...existing,
-            page: existing.page.map((t: any) =>
-              t._id === args.threadId
-                ? {
-                    ...t,
-                    updatedAt: Date.now(),
-                    title: args.isFirstMessage
-                      ? args.prompt.length > 50
-                        ? args.prompt.substring(0, 47) + "..."
-                        : args.prompt
-                      : t.title,
-                  }
-                : t,
-            ),
-          },
-        );
-      }
-    }
+    
+    // Remove threads list optimistic update to prevent authentication errors
+    // The threads list will be updated naturally when the mutation completes
   });
   const createThread = useMutation(api.chatStreaming.createThread);
 
@@ -267,10 +245,19 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
 
   const uiMessages = toUIMessages(messages?.results ?? []);
 
-  // Get current thread info for header
-  const threads = useQuery(api.threads.listThreadsByUserId, {
-    paginationOpts: { numItems: 50, cursor: null },
-  });
+  // Determine if we're currently streaming - for now, let's use a simpler approach
+  // and always apply useSmoothText to the last assistant message
+  const isStreaming = messages.isLoading && uiMessages.length > 0;
+
+  // Get current thread info for header - only query if authenticated and not loading
+  const shouldQueryThreads = isAuthenticated && !isLoading;
+  
+  const threads = useConvexQuery(
+    api.threads.listThreadsByUserId, 
+    shouldQueryThreads ? {
+      paginationOpts: { numItems: 50, cursor: null },
+    } : "skip"
+  );
   const currentThread = threads?.page.find(
     (t: any) => t._id === activeThreadId,
   );
@@ -318,7 +305,7 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
       <div className="bg-background z-10 shrink-0 px-3 pb-3 md:px-5 md:pb-5">
         <PromptInputBox
           onSend={handleSubmit}
-          isLoading={messages.isLoading}
+          isLoading={messages.isLoading || isStreaming}
           onCancel={() => window.location.reload()}
           placeholder="Ask anything..."
         />
