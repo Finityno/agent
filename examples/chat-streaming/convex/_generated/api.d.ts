@@ -8,15 +8,15 @@
  * @module
  */
 
+import type * as agents from "../agents.js";
 import type * as auth from "../auth.js";
 import type * as chatStreaming from "../chatStreaming.js";
 import type * as http from "../http.js";
-import type * as lib_agents from "../lib/agents.js";
-import type * as lib_models from "../lib/models.js";
-import type * as lib_providers from "../lib/providers.js";
-import type * as lib_tools from "../lib/tools.js";
-import type * as lib_types from "../lib/types.js";
+import type * as models from "../models.js";
+import type * as providers from "../providers.js";
 import type * as threads from "../threads.js";
+import type * as tools from "../tools.js";
+import type * as types from "../types.js";
 import type * as users from "../users.js";
 
 import type {
@@ -34,15 +34,15 @@ import type {
  * ```
  */
 declare const fullApi: ApiFromModules<{
+  agents: typeof agents;
   auth: typeof auth;
   chatStreaming: typeof chatStreaming;
   http: typeof http;
-  "lib/agents": typeof lib_agents;
-  "lib/models": typeof lib_models;
-  "lib/providers": typeof lib_providers;
-  "lib/tools": typeof lib_tools;
-  "lib/types": typeof lib_types;
+  models: typeof models;
+  providers: typeof providers;
   threads: typeof threads;
+  tools: typeof tools;
+  types: typeof types;
   users: typeof users;
 }>;
 declare const fullApiWithMounts: typeof fullApi;

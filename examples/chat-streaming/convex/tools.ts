@@ -1,9 +1,22 @@
 import { createTool } from "@convex-dev/agent";
 import { tool } from "ai";
 import { z } from "zod";
-import { ActionCtx } from "../_generated/server";
-import { internal } from "../_generated/api";
+import { ActionCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { ToolConfig, ToolId, ToolCategory } from "./types";
+
+// Zod schemas for tool validation
+const ToolConfigSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  category: z.enum(["search", "analysis", "productivity", "development", "communication", "data"]),
+  enabled: z.boolean(),
+  requiresAuth: z.boolean().optional(),
+  rateLimit: z.object({
+    requests: z.number(),
+    window: z.number(),
+  }).optional(),
+});
 
 // Tool registry with metadata
 export const toolConfigs: Record<string, ToolConfig> = {
@@ -50,8 +63,8 @@ export const toolConfigs: Record<string, ToolConfig> = {
 export const webSearchTool = createTool({
   description: "Search the web for current information and real-time data",
   args: z.object({
-    query: z.string().describe("The search query"),
-    maxResults: z.number().optional().default(5).describe("Maximum number of results to return"),
+    query: z.string().min(1, "Query cannot be empty").describe("The search query"),
+    maxResults: z.number().min(1).max(20).optional().default(5).describe("Maximum number of results to return"),
     timeRange: z.enum(["day", "week", "month", "year", "all"]).optional().default("all"),
   }),
   handler: async (ctx, args): Promise<Array<{
@@ -60,14 +73,21 @@ export const webSearchTool = createTool({
     snippet: string;
     publishedDate?: string;
   }>> => {
+    // Validate args with Zod (already done by createTool, but being explicit)
+    const validatedArgs = z.object({
+      query: z.string().min(1),
+      maxResults: z.number().min(1).max(20),
+      timeRange: z.enum(["day", "week", "month", "year", "all"]),
+    }).parse(args);
+    
     // In a real implementation, you would integrate with a search API
     // like Google Custom Search, Bing Search API, or Perplexity API
-    console.log(`Searching for: ${args.query}`);
+    console.log(`Searching for: ${validatedArgs.query}`);
     
     // Mock search results for demonstration
     return [
       {
-        title: `Search results for: ${args.query}`,
+        title: `Search results for: ${validatedArgs.query}`,
         url: "https://example.com",
         snippet: "This is a mock search result. In a real implementation, this would return actual web search results.",
         publishedDate: new Date().toISOString(),
@@ -80,7 +100,7 @@ export const webSearchTool = createTool({
 export const codeAnalysisTool = createTool({
   description: "Analyze code snippets, explain functionality, and suggest improvements",
   args: z.object({
-    code: z.string().describe("The code to analyze"),
+    code: z.string().min(1, "Code cannot be empty").describe("The code to analyze"),
     language: z.string().optional().describe("Programming language (auto-detected if not provided)"),
     analysisType: z.enum(["explain", "review", "optimize", "debug"]).default("explain"),
   }),
@@ -90,14 +110,21 @@ export const codeAnalysisTool = createTool({
     suggestions: string[];
     complexity: "low" | "medium" | "high";
   }> => {
+    // Validate args with Zod
+    const validatedArgs = z.object({
+      code: z.string().min(1),
+      language: z.string().optional(),
+      analysisType: z.enum(["explain", "review", "optimize", "debug"]),
+    }).parse(args);
+    
     // In a real implementation, you would use static analysis tools
     // or integrate with code analysis services
     
-    const detectedLanguage = args.language || detectLanguage(args.code);
+    const detectedLanguage = validatedArgs.language || detectLanguage(validatedArgs.code);
     
     return {
       language: detectedLanguage,
-      analysis: `This ${detectedLanguage} code appears to ${args.analysisType === "explain" ? "implement basic functionality" : "need review"}`,
+      analysis: `This ${detectedLanguage} code appears to ${validatedArgs.analysisType === "explain" ? "implement basic functionality" : "need review"}`,
       suggestions: [
         "Consider adding error handling",
         "Add type annotations for better maintainability",
@@ -112,7 +139,7 @@ export const codeAnalysisTool = createTool({
 export const documentSummaryTool = createTool({
   description: "Summarize long documents, articles, or text content",
   args: z.object({
-    content: z.string().describe("The content to summarize"),
+    content: z.string().min(1, "Content cannot be empty").describe("The content to summarize"),
     summaryLength: z.enum(["brief", "medium", "detailed"]).default("medium"),
     focusAreas: z.array(z.string()).optional().describe("Specific areas to focus on in the summary"),
   }),
@@ -121,7 +148,14 @@ export const documentSummaryTool = createTool({
     keyPoints: string[];
     wordCount: { original: number; summary: number };
   }> => {
-    const originalWordCount = args.content.split(/\s+/).length;
+    // Validate args with Zod
+    const validatedArgs = z.object({
+      content: z.string().min(1),
+      summaryLength: z.enum(["brief", "medium", "detailed"]),
+      focusAreas: z.array(z.string()).optional(),
+    }).parse(args);
+    
+    const originalWordCount = validatedArgs.content.split(/\s+/).length;
     
     // In a real implementation, you would use NLP libraries or AI models
     // to generate intelligent summaries
@@ -130,9 +164,9 @@ export const documentSummaryTool = createTool({
       brief: Math.max(50, Math.floor(originalWordCount * 0.1)),
       medium: Math.max(100, Math.floor(originalWordCount * 0.2)),
       detailed: Math.max(200, Math.floor(originalWordCount * 0.3)),
-    }[args.summaryLength];
+    }[validatedArgs.summaryLength];
     
-    const words = args.content.split(/\s+/);
+    const words = validatedArgs.content.split(/\s+/);
     const summary = words.slice(0, summaryLength).join(" ") + "...";
     
     return {
@@ -154,7 +188,7 @@ export const documentSummaryTool = createTool({
 export const taskPlanningTool = createTool({
   description: "Break down complex tasks into manageable steps with timelines",
   args: z.object({
-    task: z.string().describe("The main task to break down"),
+    task: z.string().min(1, "Task cannot be empty").describe("The main task to break down"),
     complexity: z.enum(["simple", "medium", "complex"]).default("medium"),
     timeframe: z.string().optional().describe("Desired completion timeframe"),
     resources: z.array(z.string()).optional().describe("Available resources"),
@@ -171,6 +205,14 @@ export const taskPlanningTool = createTool({
     totalEstimatedTime: string;
     criticalPath: number[];
   }> => {
+    // Validate args with Zod
+    const validatedArgs = z.object({
+      task: z.string().min(1),
+      complexity: z.enum(["simple", "medium", "complex"]),
+      timeframe: z.string().optional(),
+      resources: z.array(z.string()).optional(),
+    }).parse(args);
+    
     // In a real implementation, you would use project management algorithms
     // and AI to generate intelligent task breakdowns
     
@@ -178,11 +220,11 @@ export const taskPlanningTool = createTool({
       simple: 3,
       medium: 5,
       complex: 8,
-    }[args.complexity];
+    }[validatedArgs.complexity];
     
     const steps = Array.from({ length: stepCount }, (_, i) => ({
       id: i + 1,
-      title: `Step ${i + 1}: ${args.task} - Phase ${i + 1}`,
+      title: `Step ${i + 1}: ${validatedArgs.task} - Phase ${i + 1}`,
       description: `Detailed description for step ${i + 1} of the task breakdown`,
       estimatedTime: `${Math.floor(Math.random() * 4) + 1} hours`,
       dependencies: i > 0 ? [i] : [],
@@ -201,7 +243,7 @@ export const taskPlanningTool = createTool({
 export const sentimentAnalysisTool = createTool({
   description: "Analyze sentiment, emotions, and tone in text content",
   args: z.object({
-    text: z.string().describe("The text to analyze"),
+    text: z.string().min(1, "Text cannot be empty").describe("The text to analyze"),
     analysisDepth: z.enum(["basic", "detailed", "comprehensive"]).default("basic"),
     includeEmotions: z.boolean().default(false),
   }),
@@ -212,10 +254,17 @@ export const sentimentAnalysisTool = createTool({
     tone: string;
     subjectivity: number;
   }> => {
+    // Validate args with Zod
+    const validatedArgs = z.object({
+      text: z.string().min(1),
+      analysisDepth: z.enum(["basic", "detailed", "comprehensive"]),
+      includeEmotions: z.boolean(),
+    }).parse(args);
+    
     // In a real implementation, you would use sentiment analysis APIs
     // like Google Cloud Natural Language, AWS Comprehend, or Azure Text Analytics
     
-    const words = args.text.toLowerCase().split(/\s+/);
+    const words = validatedArgs.text.toLowerCase().split(/\s+/);
     const positiveWords = ["good", "great", "excellent", "amazing", "wonderful", "fantastic"];
     const negativeWords = ["bad", "terrible", "awful", "horrible", "disappointing"];
     
@@ -243,7 +292,7 @@ export const sentimentAnalysisTool = createTool({
       subjectivity: Math.random() * 0.5 + 0.25, // Mock subjectivity score
     };
     
-    if (args.includeEmotions) {
+    if (validatedArgs.includeEmotions) {
       result.emotions = [
         { emotion: "joy", intensity: sentiment === "positive" ? 0.7 : 0.2 },
         { emotion: "sadness", intensity: sentiment === "negative" ? 0.6 : 0.1 },
@@ -260,10 +309,10 @@ export const sentimentAnalysisTool = createTool({
 export const dataVisualizationTool = createTool({
   description: "Create charts and visualizations from data",
   args: z.object({
-    data: z.array(z.record(z.any())).describe("Array of data objects"),
+    data: z.array(z.record(z.any())).min(1, "Data array cannot be empty").describe("Array of data objects"),
     chartType: z.enum(["bar", "line", "pie", "scatter", "histogram"]).describe("Type of chart to create"),
-    xAxis: z.string().describe("Field name for X-axis"),
-    yAxis: z.string().describe("Field name for Y-axis"),
+    xAxis: z.string().min(1, "X-axis field cannot be empty").describe("Field name for X-axis"),
+    yAxis: z.string().min(1, "Y-axis field cannot be empty").describe("Field name for Y-axis"),
     title: z.string().optional().describe("Chart title"),
   }),
   handler: async (ctx, args): Promise<{
@@ -272,35 +321,44 @@ export const dataVisualizationTool = createTool({
     insights: string[];
     downloadUrl?: string;
   }> => {
+    // Validate args with Zod
+    const validatedArgs = z.object({
+      data: z.array(z.record(z.any())).min(1),
+      chartType: z.enum(["bar", "line", "pie", "scatter", "histogram"]),
+      xAxis: z.string().min(1),
+      yAxis: z.string().min(1),
+      title: z.string().optional(),
+    }).parse(args);
+    
     // In a real implementation, you would generate actual charts
     // using libraries like D3.js, Chart.js, or integrate with services like QuickChart
     
     return {
       chartConfig: {
-        type: args.chartType,
+        type: validatedArgs.chartType,
         data: {
-          labels: args.data.map((item, index) => item[args.xAxis] || `Point ${index + 1}`),
+          labels: validatedArgs.data.map((item, index) => item[validatedArgs.xAxis] || `Point ${index + 1}`),
           datasets: [{
-            label: args.yAxis,
-            data: args.data.map(item => item[args.yAxis] || 0),
+            label: validatedArgs.yAxis,
+            data: validatedArgs.data.map(item => item[validatedArgs.yAxis] || 0),
           }],
         },
         options: {
           responsive: true,
           plugins: {
             title: {
-              display: !!args.title,
-              text: args.title,
+              display: !!validatedArgs.title,
+              text: validatedArgs.title,
             },
           },
         },
       },
-      dataPoints: args.data.length,
+      dataPoints: validatedArgs.data.length,
       insights: [
-        `Dataset contains ${args.data.length} data points`,
-        `Chart type: ${args.chartType}`,
-        `X-axis represents: ${args.xAxis}`,
-        `Y-axis represents: ${args.yAxis}`,
+        `Dataset contains ${validatedArgs.data.length} data points`,
+        `Chart type: ${validatedArgs.chartType}`,
+        `X-axis represents: ${validatedArgs.xAxis}`,
+        `Y-axis represents: ${validatedArgs.yAxis}`,
       ],
     };
   },
@@ -308,12 +366,14 @@ export const dataVisualizationTool = createTool({
 
 // Helper function to detect programming language
 function detectLanguage(code: string): string {
-  if (code.includes("function") && code.includes("=>")) return "javascript";
-  if (code.includes("def ") && code.includes(":")) return "python";
-  if (code.includes("public class") || code.includes("import java")) return "java";
-  if (code.includes("#include") || code.includes("int main")) return "c++";
-  if (code.includes("fn ") && code.includes("->")) return "rust";
-  if (code.includes("func ") && code.includes("package")) return "go";
+  const validatedCode = z.string().parse(code);
+  
+  if (validatedCode.includes("function") && validatedCode.includes("=>")) return "javascript";
+  if (validatedCode.includes("def ") && validatedCode.includes(":")) return "python";
+  if (validatedCode.includes("public class") || validatedCode.includes("import java")) return "java";
+  if (validatedCode.includes("#include") || validatedCode.includes("int main")) return "c++";
+  if (validatedCode.includes("fn ") && validatedCode.includes("->")) return "rust";
+  if (validatedCode.includes("func ") && validatedCode.includes("package")) return "go";
   return "unknown";
 }
 
@@ -329,18 +389,31 @@ export const availableTools = {
 
 // Get tools by category
 export function getToolsByCategory(category: ToolCategory) {
+  const validatedCategory = z.enum(["search", "analysis", "productivity", "development", "communication", "data"]).parse(category);
+  
   return Object.entries(toolConfigs)
-    .filter(([_, config]) => config.category === category && config.enabled)
+    .filter(([_, config]) => {
+      // Validate each config with Zod
+      const validatedConfig = ToolConfigSchema.parse(config);
+      return validatedConfig.category === validatedCategory && validatedConfig.enabled;
+    })
     .map(([name]) => name);
 }
 
 // Get enabled tools
 export function getEnabledTools(toolNames: ToolId[]) {
-  return toolNames
-    .filter((name) => toolConfigs[name]?.enabled)
+  const validatedToolNames = z.array(z.string()).parse(toolNames);
+  
+  return validatedToolNames
+    .filter((name) => {
+      const config = toolConfigs[name];
+      if (!config) return false;
+      const validatedConfig = ToolConfigSchema.parse(config);
+      return validatedConfig.enabled;
+    })
     .reduce((acc, name) => {
-      if (availableTools[name]) {
-        acc[name] = availableTools[name];
+      if (availableTools[name as keyof typeof availableTools]) {
+        acc[name] = availableTools[name as keyof typeof availableTools];
       }
       return acc;
     }, {} as Partial<typeof availableTools>);
@@ -354,6 +427,12 @@ export async function trackToolUsage(
   success: boolean,
   executionTime: number
 ) {
+  // Validate inputs with Zod
+  const validatedToolName = z.string().parse(toolName);
+  const validatedUserId = z.string().parse(userId);
+  const validatedSuccess = z.boolean().parse(success);
+  const validatedExecutionTime = z.number().min(0).parse(executionTime);
+  
   // In a real implementation, you would save this to a database
-  console.log(`Tool usage: ${toolName} by ${userId}, success: ${success}, time: ${executionTime}ms`);
+  console.log(`Tool usage: ${validatedToolName} by ${validatedUserId}, success: ${validatedSuccess}, time: ${validatedExecutionTime}ms`);
 } 

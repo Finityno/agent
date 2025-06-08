@@ -1,14 +1,8 @@
+// Type definitions for models, tools, and agent configurations
 // Type definitions for model and tool identifiers
 export type ModelId =
-  | "gpt-4.1"
-  | "gpt-4.1-nano"
-  | "o1-preview"
-  | "o1-mini"
-  | "claude-4-sonnet-20250514"
-  | "gemini-2.5-pro-preview-06-05"
-  | "gemini-2.5-flash-preview-05-20"
-  | "llama-3.3-70b-versatile"
-  | "llama-3.1-sonar-large-128k-online";
+  | "gpt-4o-mini"
+  | "gpt-4o";
 
 export type EmbeddingModelId =
   | "text-embedding-3-small"
@@ -93,4 +87,4 @@ export interface AgentConfig {
     };
     searchOtherThreads: boolean;
   };
-}
+} 
