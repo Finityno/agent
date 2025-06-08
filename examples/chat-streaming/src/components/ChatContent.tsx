@@ -22,7 +22,7 @@ import {
   Pencil,
   Trash,
 } from "lucide-react"
-import { useRef, memo, useMemo } from "react"
+import { useRef, memo, useMemo, useCallback } from "react"
 import { useMutation, useConvexAuth, useQuery as useConvexQuery } from "convex/react"
 import { api } from "../../convex/_generated/api"
 import { Id } from "../../convex/_generated/dataModel"
@@ -40,10 +40,20 @@ interface ChatContentProps {
 }
 
 // Memoized Message component to prevent unnecessary re-renders
-const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
+const MemoizedMessage = memo(({ 
+  message, 
+  index, 
+  uiMessagesLength,
+  onCopyMessage,
+  onEditMessage,
+  onDeleteMessage,
+}: {
   message: any;
   index: number;
   uiMessagesLength: number;
+  onCopyMessage: (content: string) => void;
+  onEditMessage?: (messageId: string) => void;
+  onDeleteMessage?: (messageId: string) => void;
 }) => {
   const isAssistant = message.role !== "user"
   const isLastMessage = index === uiMessagesLength - 1
@@ -54,6 +64,97 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
   
   // For assistant messages, use smoothed content; for user messages, use original content
   const displayContent = isAssistant ? smoothedContent : message.content
+
+  // Memoize click handlers to prevent unnecessary re-renders
+  const handleCopy = useCallback(() => {
+    onCopyMessage(message.content || displayContent)
+  }, [message.content, displayContent, onCopyMessage])
+
+  const handleEdit = useCallback(() => {
+    onEditMessage?.(message.key)
+  }, [message.key, onEditMessage])
+
+  const handleDelete = useCallback(() => {
+    onDeleteMessage?.(message.key)
+  }, [message.key, onDeleteMessage])
+
+  // Memoize the action buttons to prevent re-renders
+  const assistantActions = useMemo(() => (
+    <MessageActions
+      className={cn(
+        "-ml-2.5 flex gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
+        isLastMessage && "opacity-100",
+      )}
+    >
+      <MessageAction tooltip="Copy" delayDuration={100}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
+          onClick={handleCopy}
+        >
+          <Copy />
+        </Button>
+      </MessageAction>
+      <MessageAction tooltip="Upvote" delayDuration={100}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
+        >
+          <ThumbsUp />
+        </Button>
+      </MessageAction>
+      <MessageAction tooltip="Downvote" delayDuration={100}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
+        >
+          <ThumbsDown />
+        </Button>
+      </MessageAction>
+    </MessageActions>
+  ), [isLastMessage, handleCopy])
+
+  const userActions = useMemo(() => (
+    <MessageActions
+      className={cn(
+        "flex gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
+      )}
+    >
+      <MessageAction tooltip="Edit" delayDuration={100}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
+          onClick={handleEdit}
+        >
+          <Pencil />
+        </Button>
+      </MessageAction>
+      <MessageAction tooltip="Delete" delayDuration={100}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
+          onClick={handleDelete}
+        >
+          <Trash />
+        </Button>
+      </MessageAction>
+      <MessageAction tooltip="Copy" delayDuration={100}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
+          onClick={handleCopy}
+        >
+          <Copy />
+        </Button>
+      </MessageAction>
+    </MessageActions>
+  ), [handleEdit, handleDelete, handleCopy])
 
   return (
     <Message
@@ -71,85 +172,14 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
           >
             {displayContent}
           </MessageContent>
-          <MessageActions
-            className={cn(
-              "-ml-2.5 flex gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
-              isLastMessage && "opacity-100",
-            )}
-          >
-            <MessageAction tooltip="Copy" delayDuration={100}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-                onClick={() =>
-                  navigator.clipboard.writeText(message.content)
-                }
-              >
-                <Copy />
-              </Button>
-            </MessageAction>
-            <MessageAction tooltip="Upvote" delayDuration={100}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-              >
-                <ThumbsUp />
-              </Button>
-            </MessageAction>
-            <MessageAction tooltip="Downvote" delayDuration={100}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-              >
-                <ThumbsDown />
-              </Button>
-            </MessageAction>
-          </MessageActions>
+          {assistantActions}
         </div>
       ) : (
         <div className="group flex flex-col items-end gap-1">
           <MessageContent className="bg-muted text-primary max-w-[85%] rounded-3xl px-5 py-2.5 sm:max-w-[75%]">
             {displayContent}
           </MessageContent>
-          <MessageActions
-            className={cn(
-              "flex gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
-            )}
-          >
-            <MessageAction tooltip="Edit" delayDuration={100}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-              >
-                <Pencil />
-              </Button>
-            </MessageAction>
-            <MessageAction tooltip="Delete" delayDuration={100}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-              >
-                <Trash />
-              </Button>
-            </MessageAction>
-            <MessageAction tooltip="Copy" delayDuration={100}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-                onClick={() =>
-                  navigator.clipboard.writeText(message.content)
-                }
-              >
-                <Copy />
-              </Button>
-            </MessageAction>
-          </MessageActions>
+          {userActions}
         </div>
       )}
     </Message>
@@ -166,66 +196,48 @@ function ChatContent({
 }: ChatContentProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   
+  // Use useRef to store stable references
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Memoize thread messages options to prevent unnecessary re-renders
   const threadMessagesOptions = useMemo(
-    () => ({ initialNumItems: 10, stream: true }),
+    () => ({ 
+      initialNumItems: 10, 
+      stream: true  // Enable streaming for real-time updates
+    }),
     [],
   );
+  
   const messages = useThreadMessages(
     api.chatStreaming.listThreadMessages,
     activeThreadId ? { threadId: activeThreadId } : "skip",
     threadMessagesOptions,
   );
+  
+  // Memoize mutations to prevent unnecessary re-creations
   const sendMessageAndUpdateThread = useMutation(
     api.chatStreaming.sendMessageAndUpdateThread,
-  ).withOptimisticUpdate((store, args) => {
-    const { threadId, prompt } = args;
-    
-    // Update messages cache only - this is safe and doesn't require authentication
-    const existingMessages = store.getQuery(api.chatStreaming.listThreadMessages, {
-      threadId,
-      paginationOpts: { numItems: 10, cursor: null },
-    });
-    if (existingMessages) {
-      store.setQuery(
-        api.chatStreaming.listThreadMessages,
-        {
-          threadId,
-          paginationOpts: { numItems: 10, cursor: null },
-        },
-        {
-          ...existingMessages,
-          page: [
-            ...existingMessages.page,
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: prompt,
-                },
-              ],
-              key: "optimistic-" + Date.now(),
-              message: {
-                _id: `optimistic-${Date.now()}` as Id<"messages">,
-                _creationTime: Date.now(),
-                body: prompt,
-                threadId,
-                isOptimistic: true,
-              },
-            },
-          ],
-        },
-      );
-    }
-    
-    // Remove threads list optimistic update to prevent authentication errors
-    // The threads list will be updated naturally when the mutation completes
-  });
+  );
+  
   const createThread = useMutation(api.chatStreaming.createThread);
 
-  const chatContainerRef = useRef<HTMLDivElement>(null);
+  // Memoize message action handlers
+  const handleCopyMessage = useCallback((content: string) => {
+    navigator.clipboard.writeText(content)
+  }, [])
 
-  const handleSubmit = async (prompt: string) => {
+  const handleEditMessage = useCallback((messageId: string) => {
+    // TODO: Implement edit functionality
+    console.log("Edit message:", messageId)
+  }, [])
+
+  const handleDeleteMessage = useCallback((messageId: string) => {
+    // TODO: Implement delete functionality
+    console.log("Delete message:", messageId)
+  }, [])
+
+  // Memoize submit handler
+  const handleSubmit = useCallback(async (prompt: string) => {
     if (!prompt.trim()) return;
 
     let threadId = activeThreadId;
@@ -244,16 +256,12 @@ function ChatContent({
       threadId,
       isFirstMessage,
     });
+  }, [activeThreadId, createThread, setActiveThreadId, messages?.results, sendMessageAndUpdateThread]);
 
-    if (isFirstMessage) {
-      // Logic for title generation can be handled here if needed
-    }
-  };
+  // Memoize UI messages transformation
+  const uiMessages = useMemo(() => toUIMessages(messages?.results ?? []), [messages?.results]);
 
-  const uiMessages = toUIMessages(messages?.results ?? []);
-
-  // Determine if we're currently streaming - for now, let's use a simpler approach
-  // and always apply useSmoothText to the last assistant message
+  // Determine if we're currently streaming
   const isStreaming = messages.isLoading && uiMessages.length > 0;
 
   // Use cached threads if available, otherwise query (fallback for backward compatibility)
@@ -267,9 +275,17 @@ function ChatContent({
   );
   
   const threads = cachedThreads || queriedThreads;
-  const threadForHeader = currentThread || threads?.page?.find(
-    (t: any) => t._id === activeThreadId,
+  
+  // Memoize thread for header
+  const threadForHeader = useMemo(() => 
+    currentThread || threads?.page?.find((t: any) => t._id === activeThreadId),
+    [currentThread, threads?.page, activeThreadId]
   );
+
+  // Memoize cancel handler
+  const handleCancel = useCallback(() => {
+    window.location.reload()
+  }, [])
 
   if (!activeThreadId) {
     return (
@@ -302,6 +318,9 @@ function ChatContent({
                 message={message}
                 index={index}
                 uiMessagesLength={uiMessages.length}
+                onCopyMessage={handleCopyMessage}
+                onEditMessage={handleEditMessage}
+                onDeleteMessage={handleDeleteMessage}
               />
             ))}
           </ChatContainerContent>
@@ -315,7 +334,7 @@ function ChatContent({
         <PromptInputBox
           onSend={handleSubmit}
           isLoading={messages.isLoading || isStreaming}
-          onCancel={() => window.location.reload()}
+          onCancel={handleCancel}
           placeholder="Ask anything..."
         />
       </div>

@@ -17,6 +17,7 @@ import {
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { v4 as uuidv4 } from "uuid";
+import { openai } from "@ai-sdk/openai";
 
 // Zod schemas for validation
 const ThreadIdSchema = z.string();
@@ -32,7 +33,15 @@ async function createSimpleAgent() {
     textEmbedding: openai.textEmbedding("text-embedding-3-small"),
     instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
   });
-}
+  }
+
+// Create a global agent instance for queries (since queries can't use dynamic imports)
+const defaultAgent = new Agent(components.agent, {
+  name: "Simple Chat Agent",
+  chat: openai("gpt-4o-mini"),
+  textEmbedding: openai.textEmbedding("text-embedding-3-small"),
+  instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
+});
 
 // Streaming, where generate the prompt message first, then asynchronously
 // generate the stream response.
@@ -110,18 +119,25 @@ export const createAgentThreadAndSaveMessage = internalAction({
       });
     }
     
-    // Save the message using the agent's thread ID
-    const { messageId } = await defaultAgent.saveMessage(ctx, {
-      threadId: agentThreadId,
-      prompt: validatedPrompt,
-      skipEmbeddings: true,
-    });
+    // Continue with the existing thread and generate streaming text with deltas
+    const { thread } = await defaultAgent.continueThread(ctx, { threadId: agentThreadId });
     
-    // Now stream the response using the agent's thread ID
-    await ctx.scheduler.runAfter(0, internal.chatStreaming.streamResponse, {
-      threadId: agentThreadId,
-      promptMessageId: messageId,
-    });
+    // Use streamText instead of generateText to enable real-time streaming with deltas
+    const result = await thread.streamText(
+      { prompt: validatedPrompt },
+      { 
+        // Enable saving of stream deltas for real-time updates
+        saveStreamDeltas: true,
+        // Save the generated output to thread history
+        storageOptions: {
+          saveOutputMessages: true,
+          saveAnyInputMessages: true,
+        }
+      }
+    );
+    
+    // Consume the stream to process all deltas
+    await result.consumeStream();
   },
 });
 
@@ -165,29 +181,34 @@ export const listThreadMessages = query({
     const localThread = await ctx.db.get(validatedThreadId as Id<"threads">);
     if (!localThread || !localThread.agentThreadId) {
       // If no agent thread exists yet, return empty structure with proper streams format
-      // Handle both "list" and "deltas" stream types
-      const streams = streamArgs?.kind === "deltas" 
+      const emptyStreams = streamArgs?.kind === "deltas" 
         ? { kind: "deltas" as const, deltas: [] }
-        : { kind: "list" as const, messages: [] };
+        : streamArgs?.kind === "list"
+        ? { kind: "list" as const, messages: [] }
+        : { kind: "deltas" as const, deltas: [] };
       
       return {
         page: [],
         isDone: true,
         continueCursor: "",
-        streams,
+        streams: emptyStreams,
       };
     }
     
-    // For now, return a simple structure without agent calls
-    // In a real app, you'd restructure this to use actions instead of queries for agent operations
-    return {
-      page: [],
-      isDone: true,
-      continueCursor: "",
-      streams: streamArgs?.kind === "deltas" 
-        ? { kind: "deltas" as const, deltas: [] }
-        : { kind: "list" as const, messages: [] },
-    };
+    // Use the agent to list messages from the agent thread
+    const paginated = await defaultAgent.listMessages(ctx, { 
+      threadId: localThread.agentThreadId, 
+      paginationOpts 
+    });
+    
+    // Sync streams for real-time delta updates - this is the key for streaming
+    const streams = await defaultAgent.syncStreams(ctx, { 
+      threadId: localThread.agentThreadId, 
+      streamArgs: streamArgs || { kind: "deltas" as const, cursors: [] }  // Default to deltas with empty cursors
+    });
+    
+    // Return both historical messages and streaming deltas
+    return { ...paginated, streams };
   },
 });
 
@@ -259,6 +280,22 @@ export const updateLocalThreadAgentId = internalMutation({
     await ctx.db.patch(validatedThreadId as Id<"threads">, {
       agentThreadId: validatedAgentThreadId,
     });
+  },
+});
+
+// Add a query to list user threads
+export const listUserThreads = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, { paginationOpts }) => {
+    const userId = await getUserId(ctx);
+    
+    return await ctx.db
+      .query("threads")
+      .withIndex("by_userId_updatedAt", (q) => q.eq("userId", userId))
+      .order("desc")
+      .paginate(paginationOpts);
   },
 });
 

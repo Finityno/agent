@@ -159,7 +159,6 @@ export const updateThreadTimestamp = mutation({
     });
   },
 });
-
 export const deleteThread = mutation({
   args: {
     threadId: v.id("threads"),

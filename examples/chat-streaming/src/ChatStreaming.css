@@ -1,3 +1,1 @@
-.ai-message-content {
-  min-height: 100px; /* Adjust as needed */
-}
+/* Removed min-height rule to fix message actions positioning */

@@ -35,16 +35,11 @@ const styles = `
   }
 `;
 
-// Inject styles into document
-const styleSheet = document.createElement("style");
-styleSheet.innerText = styles;
-document.head.appendChild(styleSheet);
-
-// Textarea Component
+// Textarea Component - Memoized
 interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   className?: string;
 }
-const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(({ className, ...props }, ref) => (
+const Textarea = React.memo(React.forwardRef<HTMLTextAreaElement, TextareaProps>(({ className, ...props }, ref) => (
   <textarea
     className={cn(
       "flex w-full rounded-md border-none bg-transparent px-3 py-2.5 text-base text-gray-100 placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] resize-none scrollbar-thin scrollbar-thumb-[#444444] scrollbar-track-transparent hover:scrollbar-thumb-[#555555]",
@@ -54,14 +49,14 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(({ classNa
     rows={1}
     {...props}
   />
-));
+)));
 Textarea.displayName = "Textarea";
 
-// Tooltip Components
+// Tooltip Components - Memoized
 const TooltipProvider = TooltipPrimitive.Provider;
 const Tooltip = TooltipPrimitive.Root;
 const TooltipTrigger = TooltipPrimitive.Trigger;
-const TooltipContent = React.forwardRef<
+const TooltipContent = React.memo(React.forwardRef<
   React.ElementRef<typeof TooltipPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
 >(({ className, sideOffset = 4, ...props }, ref) => (
@@ -74,13 +69,13 @@ const TooltipContent = React.forwardRef<
     )}
     {...props}
   />
-));
+)));
 TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
-// Dialog Components
+// Dialog Components - Memoized
 const Dialog = DialogPrimitive.Root;
 const DialogPortal = DialogPrimitive.Portal;
-const DialogOverlay = React.forwardRef<
+const DialogOverlay = React.memo(React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
@@ -92,10 +87,10 @@ const DialogOverlay = React.forwardRef<
     )}
     {...props}
   />
-));
+)));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
-const DialogContent = React.forwardRef<
+const DialogContent = React.memo(React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
@@ -116,10 +111,10 @@ const DialogContent = React.forwardRef<
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
   </DialogPortal>
-));
+)));
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
-const DialogTitle = React.forwardRef<
+const DialogTitle = React.memo(React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Title>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
 >(({ className, ...props }, ref) => (
@@ -128,27 +123,29 @@ const DialogTitle = React.forwardRef<
     className={cn("text-lg font-semibold leading-none tracking-tight text-gray-100", className)}
     {...props}
   />
-));
+)));
 DialogTitle.displayName = DialogPrimitive.Title.displayName;
 
-// Button Component
+// Button Component - Memoized
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "default" | "outline" | "ghost";
   size?: "default" | "sm" | "lg" | "icon";
 }
-const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+const Button = React.memo(React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = "default", size = "default", ...props }, ref) => {
-    const variantClasses = {
+    const variantClasses = React.useMemo(() => ({
       default: "bg-white hover:bg-white/80 text-black",
       outline: "border border-[#444444] bg-transparent hover:bg-[#3A3A40]",
       ghost: "bg-transparent hover:bg-[#3A3A40]",
-    };
-    const sizeClasses = {
+    }), []);
+    
+    const sizeClasses = React.useMemo(() => ({
       default: "h-10 px-4 py-2",
       sm: "h-8 px-3 text-sm",
       lg: "h-12 px-6",
       icon: "h-8 w-8 rounded-full aspect-[1/1]",
-    };
+    }), []);
+    
     return (
       <button
         className={cn(
@@ -162,17 +159,18 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       />
     );
   }
-);
+));
 Button.displayName = "Button";
 
-// VoiceRecorder Component
+// VoiceRecorder Component - Memoized
 interface VoiceRecorderProps {
   isRecording: boolean;
   onStartRecording: () => void;
   onStopRecording: (duration: number) => void;
   visualizerBars?: number;
 }
-const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
+
+const VoiceRecorder = React.memo<VoiceRecorderProps>(({
   isRecording,
   onStartRecording,
   onStopRecording,
@@ -180,6 +178,27 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
 }) => {
   const [time, setTime] = React.useState(0);
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Memoize the time formatter
+  const formatTime = React.useCallback((seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }, []);
+
+  // Memoize visualizer bars - renamed to avoid conflict
+  const visualizerElements = React.useMemo(() => 
+    [...Array(visualizerBars)].map((_, i) => (
+      <div
+        key={i}
+        className="w-0.5 rounded-full bg-white/50 animate-pulse"
+        style={{
+          height: `${Math.max(15, Math.random() * 100)}%`,
+          animationDelay: `${i * 0.05}s`,
+          animationDuration: `${0.5 + Math.random() * 0.5}s`,
+        }}
+      />
+    )), [visualizerBars]);
 
   React.useEffect(() => {
     if (isRecording) {
@@ -198,12 +217,6 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
     };
   }, [isRecording, time, onStartRecording, onStopRecording]);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  };
-
   return (
     <div
       className={cn(
@@ -216,28 +229,20 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
         <span className="font-mono text-sm text-white/80">{formatTime(time)}</span>
       </div>
       <div className="w-full h-10 flex items-center justify-center gap-0.5 px-4">
-        {[...Array(visualizerBars)].map((_, i) => (
-          <div
-            key={i}
-            className="w-0.5 rounded-full bg-white/50 animate-pulse"
-            style={{
-              height: `${Math.max(15, Math.random() * 100)}%`,
-              animationDelay: `${i * 0.05}s`,
-              animationDuration: `${0.5 + Math.random() * 0.5}s`,
-            }}
-          />
-        ))}
+        {visualizerElements}
       </div>
     </div>
   );
-};
+});
 
-// ImageViewDialog Component
+VoiceRecorder.displayName = "VoiceRecorder";
+
+// ImageViewDialog Component - Memoized
 interface ImageViewDialogProps {
   imageUrl: string | null;
   onClose: () => void;
 }
-const ImageViewDialog: React.FC<ImageViewDialogProps> = ({ imageUrl, onClose }) => {
+const ImageViewDialog = React.memo<ImageViewDialogProps>(({ imageUrl, onClose }) => {
   if (!imageUrl) return null;
   return (
     <Dialog open={!!imageUrl} onOpenChange={onClose}>
@@ -259,7 +264,9 @@ const ImageViewDialog: React.FC<ImageViewDialogProps> = ({ imageUrl, onClose }) 
       </DialogContent>
     </Dialog>
   );
-};
+});
+
+ImageViewDialog.displayName = "ImageViewDialog";
 
 // PromptInput Context and Components
 interface PromptInputContextType {
@@ -270,6 +277,7 @@ interface PromptInputContextType {
   onSubmit?: () => void;
   disabled?: boolean;
 }
+
 const PromptInputContext = React.createContext<PromptInputContextType>({
   isLoading: false,
   value: "",
@@ -278,11 +286,12 @@ const PromptInputContext = React.createContext<PromptInputContextType>({
   onSubmit: undefined,
   disabled: false,
 });
-function usePromptInput() {
+
+const usePromptInput = () => {
   const context = React.useContext(PromptInputContext);
   if (!context) throw new Error("usePromptInput must be used within a PromptInput");
   return context;
-}
+};
 
 interface PromptInputProps {
   isLoading?: boolean;
@@ -297,7 +306,8 @@ interface PromptInputProps {
   onDragLeave?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
 }
-const PromptInput = React.forwardRef<HTMLDivElement, PromptInputProps>(
+
+const PromptInput = React.memo(React.forwardRef<HTMLDivElement, PromptInputProps>(
   (
     {
       className,
@@ -315,22 +325,24 @@ const PromptInput = React.forwardRef<HTMLDivElement, PromptInputProps>(
     ref
   ) => {
     const [internalValue, setInternalValue] = React.useState(value || "");
-    const handleChange = (newValue: string) => {
+    
+    const handleChange = React.useCallback((newValue: string) => {
       setInternalValue(newValue);
       onValueChange?.(newValue);
-    };
+    }, [onValueChange]);
+
+    const contextValue = React.useMemo(() => ({
+      isLoading,
+      value: value ?? internalValue,
+      setValue: onValueChange ?? handleChange,
+      maxHeight,
+      onSubmit,
+      disabled,
+    }), [isLoading, value, internalValue, onValueChange, handleChange, maxHeight, onSubmit, disabled]);
+
     return (
       <TooltipProvider>
-        <PromptInputContext.Provider
-          value={{
-            isLoading,
-            value: value ?? internalValue,
-            setValue: onValueChange ?? handleChange,
-            maxHeight,
-            onSubmit,
-            disabled,
-          }}
-        >
+        <PromptInputContext.Provider value={contextValue}>
           <div
             ref={ref}
             className={cn(
@@ -348,14 +360,15 @@ const PromptInput = React.forwardRef<HTMLDivElement, PromptInputProps>(
       </TooltipProvider>
     );
   }
-);
+));
 PromptInput.displayName = "PromptInput";
 
 interface PromptInputTextareaProps {
   disableAutosize?: boolean;
   placeholder?: string;
 }
-const PromptInputTextarea: React.FC<PromptInputTextareaProps & React.ComponentProps<typeof Textarea>> = ({
+
+const PromptInputTextarea = React.memo<PromptInputTextareaProps & React.ComponentProps<typeof Textarea>>(({
   className,
   onKeyDown,
   disableAutosize = false,
@@ -374,19 +387,23 @@ const PromptInputTextarea: React.FC<PromptInputTextareaProps & React.ComponentPr
         : `min(${textareaRef.current.scrollHeight}px, ${maxHeight})`;
   }, [value, maxHeight, disableAutosize]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       onSubmit?.();
     }
     onKeyDown?.(e);
-  };
+  }, [onSubmit, onKeyDown]);
+
+  const handleChange = React.useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setValue(e.target.value);
+  }, [setValue]);
 
   return (
     <Textarea
       ref={textareaRef}
       value={value}
-      onChange={(e) => setValue(e.target.value)}
+      onChange={handleChange}
       onKeyDown={handleKeyDown}
       className={cn("text-base", className)}
       disabled={disabled}
@@ -394,14 +411,18 @@ const PromptInputTextarea: React.FC<PromptInputTextareaProps & React.ComponentPr
       {...props}
     />
   );
-};
+});
+
+PromptInputTextarea.displayName = "PromptInputTextarea";
 
 interface PromptInputActionsProps extends React.HTMLAttributes<HTMLDivElement> {}
-const PromptInputActions: React.FC<PromptInputActionsProps> = ({ children, className, ...props }) => (
+const PromptInputActions = React.memo<PromptInputActionsProps>(({ children, className, ...props }) => (
   <div className={cn("flex items-center gap-2", className)} {...props}>
     {children}
   </div>
-);
+));
+
+PromptInputActions.displayName = "PromptInputActions";
 
 interface PromptInputActionProps extends React.ComponentProps<typeof Tooltip> {
   tooltip: React.ReactNode;
@@ -409,7 +430,7 @@ interface PromptInputActionProps extends React.ComponentProps<typeof Tooltip> {
   side?: "top" | "bottom" | "left" | "right";
   className?: string;
 }
-const PromptInputAction: React.FC<PromptInputActionProps> = ({
+const PromptInputAction = React.memo<PromptInputActionProps>(({
   tooltip,
   children,
   className,
@@ -427,10 +448,12 @@ const PromptInputAction: React.FC<PromptInputActionProps> = ({
       </TooltipContent>
     </Tooltip>
   );
-};
+});
 
-// Custom Divider Component
-const CustomDivider: React.FC = () => (
+PromptInputAction.displayName = "PromptInputAction";
+
+// Custom Divider Component - Memoized
+const CustomDivider = React.memo(() => (
   <div className="relative h-6 w-[1.5px] mx-1">
     <div
       className="absolute inset-0 bg-gradient-to-t from-transparent via-[#9b87f5]/70 to-transparent rounded-full"
@@ -439,7 +462,9 @@ const CustomDivider: React.FC = () => (
       }}
     />
   </div>
-);
+));
+
+CustomDivider.displayName = "CustomDivider";
 
 // Main PromptInputBox Component
 interface PromptInputBoxProps {
@@ -449,8 +474,16 @@ interface PromptInputBoxProps {
   placeholder?: string;
   className?: string;
 }
-export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref: React.Ref<HTMLDivElement>) => {
-  const { onSend = () => {}, onCancel = () => {}, isLoading = false, placeholder = "Type your message here...", className } = props;
+
+export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, PromptInputBoxProps>((props, ref) => {
+  const { 
+    onSend = () => {}, 
+    onCancel = () => {}, 
+    isLoading = false, 
+    placeholder = "Type your message here...", 
+    className 
+  } = props;
+  
   const [input, setInput] = React.useState("");
   const [files, setFiles] = React.useState<File[]>([]);
   const [filePreviews, setFilePreviews] = React.useState<{ [key: string]: string }>({});
@@ -460,55 +493,38 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
   const [showThink, setShowThink] = React.useState(false);
   const [showCanvas, setShowCanvas] = React.useState(false);
   const [selectedModel, setSelectedModel] = React.useState("gpt-4.1");
+  
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const promptBoxRef = React.useRef<HTMLDivElement>(null);
 
-  // Available AI models - will be loaded from backend
-  const [availableModels, setAvailableModels] = React.useState([
+  // Memoize available models to prevent re-renders
+  const availableModels = React.useMemo(() => [
     { id: "gpt-4.1", name: "GPT-4.1", description: "Latest and most advanced GPT model", provider: "openai", category: "powerful" },
     { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", description: "Ultra-fast and efficient latest model", provider: "openai", category: "fast" },
     { id: "claude-4-sonnet-20250514", name: "Claude 4 Sonnet", description: "Latest and most capable Claude model", provider: "anthropic", category: "powerful" },
     { id: "gemini-2.5-pro-preview-06-05", name: "Gemini 2.5 Pro", description: "Latest and most advanced Gemini model", provider: "google", category: "powerful" },
     { id: "gemini-2.5-flash-preview-05-20", name: "Gemini 2.5 Flash", description: "Ultra-fast latest Gemini model", provider: "google", category: "fast" },
-  ]);
+  ], []);
 
-  // Load available models from backend
-  React.useEffect(() => {
-    // In a real implementation, you would fetch from your Convex backend
-    // const models = await ctx.runQuery(api.chatStreaming.getAvailableModelsQuery);
-    // setAvailableModels(models);
-  }, []);
+  // Memoize file type check
+  const isImageFile = React.useCallback((file: File) => file.type.startsWith("image/"), []);
 
-  const handleToggleChange = (value: string) => {
-    if (value === "search") {
-      setShowSearch((prev) => !prev);
-      setShowThink(false);
-    } else if (value === "think") {
-      setShowThink((prev) => !prev);
-      setShowSearch(false);
-    }
-  };
-
-  const handleCanvasToggle = () => setShowCanvas((prev) => !prev);
-
-  const isImageFile = (file: File) => file.type.startsWith("image/");
-
-  const processFile = (file: File) => {
+  // Memoize file processing function
+  const processFile = React.useCallback((file: File) => {
     if (!isImageFile(file)) {
-      // Only image files are allowed
       return;
     }
 
     if (file.size > 10 * 1024 * 1024) {
-      // File too large (max 10MB)
       return;
     }
     setFiles([file]);
     const reader = new FileReader();
     reader.onload = (e) => setFilePreviews({ [file.name]: e.target?.result as string });
     reader.readAsDataURL(file);
-  };
+  }, [isImageFile]);
 
+  // Memoize drag handlers
   const handleDragOver = React.useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -525,16 +541,19 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
     const files = Array.from(e.dataTransfer.files);
     const imageFiles = files.filter((file) => isImageFile(file));
     if (imageFiles.length > 0) processFile(imageFiles[0]);
-  }, []);
+  }, [isImageFile, processFile]);
 
-  const handleRemoveFile = (index: number) => {
+  // Memoize file removal handler
+  const handleRemoveFile = React.useCallback((index: number) => {
     const fileToRemove = files[index];
     if (fileToRemove && filePreviews[fileToRemove.name]) setFilePreviews({});
     setFiles([]);
-  };
+  }, [files, filePreviews]);
 
-  const openImageModal = (imageUrl: string) => setSelectedImage(imageUrl);
+  // Memoize image modal handler
+  const openImageModal = React.useCallback((imageUrl: string) => setSelectedImage(imageUrl), []);
 
+  // Memoize paste handler
   const handlePaste = React.useCallback((e: ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -548,16 +567,29 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
         }
       }
     }
-  }, []);
+  }, [processFile]);
 
+  // Set up paste listener
   React.useEffect(() => {
     document.addEventListener("paste", handlePaste);
     return () => document.removeEventListener("paste", handlePaste);
   }, [handlePaste]);
 
+  // Memoize toggle handlers
+  const handleToggleChange = React.useCallback((value: string) => {
+    if (value === "search") {
+      setShowSearch((prev) => !prev);
+      setShowThink(false);
+    } else if (value === "think") {
+      setShowThink((prev) => !prev);
+      setShowSearch(false);
+    }
+  }, []);
 
+  const handleCanvasToggle = React.useCallback(() => setShowCanvas((prev) => !prev), []);
 
-  const handleSubmit = () => {
+  // Memoize submit handler
+  const handleSubmit = React.useCallback(() => {
     if (input.trim() || files.length > 0) {
       let messagePrefix = "";
       if (showSearch) messagePrefix = "[Search: ";
@@ -569,19 +601,59 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
       setFiles([]);
       setFilePreviews({});
     }
-  };
+  }, [input, files, showSearch, showThink, showCanvas, onSend]);
 
-  const handleStartRecording = () => {
+  // Memoize recording handlers
+  const handleStartRecording = React.useCallback(() => {
     // Started recording
-  };
+  }, []);
 
-  const handleStopRecording = (duration: number) => {
-    // Stopped recording after ${duration} seconds
+  const handleStopRecording = React.useCallback((duration: number) => {
     setIsRecording(false);
     onSend(`[Voice message - ${duration} seconds]`, []);
-  };
+  }, [onSend]);
 
-  const hasContent = input.trim() !== "" || files.length > 0;
+  // Memoize content state
+  const hasContent = React.useMemo(() => input.trim() !== "" || files.length > 0, [input, files.length]);
+
+  // Memoize upload click handler
+  const handleUploadClick = React.useCallback(() => uploadInputRef.current?.click(), []);
+
+  // Memoize file input change handler
+  const handleFileInputChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) processFile(e.target.files[0]);
+    if (e.target) e.target.value = "";
+  }, [processFile]);
+
+  // Memoize main button click handler
+  const handleMainButtonClick = React.useCallback(() => {
+    if (isLoading) onCancel();
+    else if (isRecording) setIsRecording(false);
+    else if (hasContent) handleSubmit();
+    else setIsRecording(true);
+  }, [isLoading, isRecording, hasContent, onCancel, handleSubmit]);
+
+  // Memoize placeholder text
+  const placeholderText = React.useMemo(() => {
+    if (showSearch) return "Search the web...";
+    if (showThink) return "Think deeply...";
+    if (showCanvas) return "Create on canvas...";
+    return placeholder;
+  }, [showSearch, showThink, showCanvas, placeholder]);
+
+  // Inject styles once when component mounts
+  React.useEffect(() => {
+    const styleSheet = document.createElement("style");
+    styleSheet.innerText = styles;
+    document.head.appendChild(styleSheet);
+    
+    return () => {
+      // Clean up styles when component unmounts
+      if (document.head.contains(styleSheet)) {
+        document.head.removeChild(styleSheet);
+      }
+    };
+  }, []);
 
   return (
     <>
@@ -638,15 +710,7 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
           )}
         >
           <PromptInputTextarea
-            placeholder={
-              showSearch
-                ? "Search the web..."
-                : showThink
-                ? "Think deeply..."
-                : showCanvas
-                ? "Create on canvas..."
-                : placeholder
-            }
+            placeholder={placeholderText}
             className="text-base"
           />
         </div>
@@ -668,7 +732,7 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
           >
             <PromptInputAction tooltip="Upload image">
               <button
-                onClick={() => uploadInputRef.current?.click()}
+                onClick={handleUploadClick}
                 className="flex h-8 w-8 text-[#9CA3AF] cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-gray-600/30 hover:text-[#D1D5DB]"
                 disabled={isLoading || isRecording}
               >
@@ -677,10 +741,7 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
                   ref={uploadInputRef}
                   type="file"
                   className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files.length > 0) processFile(e.target.files[0]);
-                    if (e.target) e.target.value = "";
-                  }}
+                  onChange={handleFileInputChange}
                   accept="image/*"
                 />
               </button>
@@ -842,12 +903,7 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
                   ? "bg-white hover:bg-white/80 text-[#1F2023]"
                   : "bg-transparent hover:bg-gray-600/30 text-[#9CA3AF] hover:text-[#D1D5DB]"
               )}
-              onClick={() => {
-                if (isLoading) onCancel();
-                else if (isRecording) setIsRecording(false);
-                else if (hasContent) handleSubmit();
-                else setIsRecording(true);
-              }}
+              onClick={handleMainButtonClick}
             >
               {isLoading ? (
                 <Square className="h-4 w-4 fill-[#1F2023] animate-pulse" />
@@ -866,5 +922,6 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
       <ImageViewDialog imageUrl={selectedImage} onClose={() => setSelectedImage(null)} />
     </>
   );
-});
+}));
+
 PromptInputBox.displayName = "PromptInputBox";
