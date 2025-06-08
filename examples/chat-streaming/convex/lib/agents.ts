@@ -1,37 +1,8 @@
 import { Agent } from "@convex-dev/agent";
 import { components } from "../_generated/api";
-import { getChatModel, getEmbeddingModel, modelConfigs, getAvailableModels, embeddingConfigs } from "./models";
-import { availableTools, getEnabledTools, toolConfigs } from "./tools";
-
-// Agent configuration interface
-export interface AgentConfig {
-  name: string;
-  description: string;
-  instructions: string;
-  chatModel: string;
-  embeddingModel: string;
-  tools: string[];
-  capabilities: {
-    streaming: boolean;
-    vision: boolean;
-    reasoning: boolean;
-    webSearch: boolean;
-    codeAnalysis: boolean;
-  };
-  maxSteps: number;
-  maxRetries: number;
-  contextOptions?: {
-    includeToolCalls: boolean;
-    recentMessages: number;
-    searchOptions: {
-      limit: number;
-      textSearch: boolean;
-      vectorSearch: boolean;
-      messageRange: { before: number; after: number };
-    };
-    searchOtherThreads: boolean;
-  };
-}
+import { getChatModel, getEmbeddingModel } from "./models";
+import { getEnabledTools } from "./tools";
+import { AgentConfig, ModelId } from "./types";
 
 // Predefined agent configurations
 export const agentConfigs: Record<string, AgentConfig> = {
@@ -215,25 +186,19 @@ export const agentConfigs: Record<string, AgentConfig> = {
     },
   },
 };
-
 // Create agent instances
-export function createAgent(agentType: keyof typeof agentConfigs): Agent {
-  const config = agentConfigs[agentType];
+export function createAgent(agentType: keyof typeof agentConfigs) {
+  const config: AgentConfig | undefined = agentConfigs[agentType];
   if (!config) {
     throw new Error(`Unknown agent type: ${agentType}`);
   }
 
   // Get the configured models
   const chatModel = getChatModel(config.chatModel);
-  const embeddingModel = getEmbeddingModel(config.embeddingModel as "text-embedding-3-small" | "text-embedding-3-large");
+  const embeddingModel = getEmbeddingModel(config.embeddingModel);
 
-  // Get the configured tools
-  const tools = config.tools.reduce((acc, toolName) => {
-    if (availableTools[toolName as keyof typeof availableTools]) {
-      acc[toolName] = availableTools[toolName as keyof typeof availableTools];
-    }
-    return acc;
-  }, {} as Record<string, any>);
+  // Get the enabled tools based on the agent's configuration
+  const tools = getEnabledTools(config.tools);
 
   return new Agent(components.agent, {
     name: config.name,
@@ -285,7 +250,11 @@ export function getAgentByCapability(capability: keyof AgentConfig["capabilities
     .filter(([_, config]) => config.capabilities[capability])
     .map(([name]) => name);
   
-  return suitableAgents.length > 0 ? agents[suitableAgents[0] as keyof typeof agents] : agents.chat;
+  if (suitableAgents.length === 0) {
+    return agents.chat;
+  }
+  const agentKey = suitableAgents[0] as keyof typeof agents;
+  return agents[agentKey];
 }
 
 // Get agent recommendations based on user input
@@ -339,19 +308,23 @@ export function getAvailableAgents() {
 }
 
 // Dynamic agent creation with custom configuration
-export function createCustomAgent(customConfig: Partial<AgentConfig> & { name: string }) {
+export function createCustomAgent(
+  customConfig: Partial<AgentConfig> & { name: string }
+) {
   const baseConfig = agentConfigs.chatAgent; // Use chat agent as base
-  const config = { ...baseConfig, ...customConfig };
-  
+  const config: AgentConfig = {
+    ...baseConfig,
+    ...customConfig,
+    // Ensure all required fields are present
+    chatModel: customConfig.chatModel || baseConfig.chatModel,
+    embeddingModel: customConfig.embeddingModel || baseConfig.embeddingModel,
+    tools: customConfig.tools || baseConfig.tools,
+  };
+
   const chatModel = getChatModel(config.chatModel);
-  const embeddingModel = getEmbeddingModel(config.embeddingModel as "text-embedding-3-small" | "text-embedding-3-large");
-  
-  const tools = config.tools.reduce((acc, toolName) => {
-    if (availableTools[toolName as keyof typeof availableTools]) {
-      acc[toolName] = availableTools[toolName as keyof typeof availableTools];
-    }
-    return acc;
-  }, {} as Record<string, any>);
+  const embeddingModel = getEmbeddingModel(config.embeddingModel);
+
+  const tools = getEnabledTools(config.tools);
 
   return new Agent(components.agent, {
     name: config.name,
@@ -362,4 +335,4 @@ export function createCustomAgent(customConfig: Partial<AgentConfig> & { name: s
     maxSteps: config.maxSteps,
     maxRetries: config.maxRetries,
   });
-} 
+}

@@ -1,8 +1,8 @@
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
-
+import { ModelConfig, ModelId, EmbeddingModelId } from "./types";
+import { providers } from "./providers";
 // Environment variable validation
 function validateEnvVar(name: string, value: string | undefined): string {
   if (!value) {
@@ -11,44 +11,6 @@ function validateEnvVar(name: string, value: string | undefined): string {
     );
   }
   return value;
-}
-
-// Provider configurations
-const providers = {
-  openai: openai,
-  anthropic: anthropic,
-  google: google,
-  // Custom OpenAI-compatible providers
-  groq: createOpenAI({
-    apiKey: process.env.GROQ_API_KEY,
-    baseURL: "https://api.groq.com/openai/v1",
-  }),
-  perplexity: createOpenAI({
-    apiKey: process.env.PERPLEXITY_API_KEY,
-    baseURL: "https://api.perplexity.ai",
-  }),
-} as const;
-
-// Model definitions with metadata
-export interface ModelConfig {
-  id: string;
-  name: string;
-  provider: keyof typeof providers;
-  description: string;
-  contextWindow: number;
-  maxTokens: number;
-  pricing: {
-    input: number; // per 1M tokens
-    output: number; // per 1M tokens
-  };
-  capabilities: {
-    chat: boolean;
-    streaming: boolean;
-    functionCalling: boolean;
-    vision: boolean;
-    reasoning: boolean;
-  };
-  category: "fast" | "balanced" | "powerful" | "reasoning";
 }
 
 export const modelConfigs: Record<string, ModelConfig> = {
@@ -235,7 +197,7 @@ export const embeddingConfigs = {
 };
 
 // Helper functions to get models
-export function getChatModel(modelId: string) {
+export function getChatModel(modelId: ModelId) {
   const config = modelConfigs[modelId];
   if (!config) {
     throw new Error(`Unknown model: ${modelId}`);
@@ -249,7 +211,7 @@ export function getChatModel(modelId: string) {
   return provider.chat(modelId);
 }
 
-export function getEmbeddingModel(modelId: keyof typeof embeddingConfigs) {
+export function getEmbeddingModel(modelId: EmbeddingModelId) {
   const config = embeddingConfigs[modelId];
   if (!config) {
     throw new Error(`Unknown embedding model: ${modelId}`);
@@ -260,12 +222,14 @@ export function getEmbeddingModel(modelId: keyof typeof embeddingConfigs) {
     throw new Error(`Provider not configured: ${config.provider}`);
   }
 
-  return provider.textEmbeddingModel(modelId);
+  return provider.textEmbedding(modelId);
 }
 
 // Get available models by category
 export function getModelsByCategory(category: ModelConfig["category"]) {
-  return Object.values(modelConfigs).filter(model => model.category === category);
+  return Object.values(modelConfigs).filter(
+    (model) => model.category === category
+  );
 }
 
 // Get models by capability

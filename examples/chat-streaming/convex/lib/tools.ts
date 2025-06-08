@@ -3,27 +3,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
-
-// Tool categories for organization
-export type ToolCategory = 
-  | "search" 
-  | "analysis" 
-  | "productivity" 
-  | "development" 
-  | "communication"
-  | "data";
-
-export interface ToolConfig {
-  name: string;
-  description: string;
-  category: ToolCategory;
-  enabled: boolean;
-  requiresAuth?: boolean;
-  rateLimit?: {
-    requests: number;
-    window: number; // in seconds
-  };
-}
+import { ToolConfig, ToolId, ToolCategory } from "./types";
 
 // Tool registry with metadata
 export const toolConfigs: Record<string, ToolConfig> = {
@@ -355,15 +335,15 @@ export function getToolsByCategory(category: ToolCategory) {
 }
 
 // Get enabled tools
-export function getEnabledTools() {
-  return Object.entries(toolConfigs)
-    .filter(([_, config]) => config.enabled)
-    .reduce((acc, [name, _]) => {
-      if (availableTools[name as keyof typeof availableTools]) {
-        acc[name] = availableTools[name as keyof typeof availableTools];
+export function getEnabledTools(toolNames: ToolId[]) {
+  return toolNames
+    .filter((name) => toolConfigs[name]?.enabled)
+    .reduce((acc, name) => {
+      if (availableTools[name]) {
+        acc[name] = availableTools[name];
       }
       return acc;
-    }, {} as Record<string, any>);
+    }, {} as Partial<typeof availableTools>);
 }
 
 // Tool usage tracking
