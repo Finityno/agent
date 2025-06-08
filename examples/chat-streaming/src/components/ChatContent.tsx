@@ -35,6 +35,8 @@ import {
 interface ChatContentProps {
   activeThreadId: Id<"threads"> | null;
   setActiveThreadId: (id: Id<"threads"> | null, uuid?: string) => void;
+  threads?: any; // Cached threads data to avoid duplicate queries
+  currentThread?: any; // Current thread data passed from parent
 }
 
 // Memoized Message component to prevent unnecessary re-renders
@@ -156,7 +158,12 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
 
 MemoizedMessage.displayName = "MemoizedMessage";
 
-function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
+function ChatContent({ 
+  activeThreadId, 
+  setActiveThreadId, 
+  threads: cachedThreads, 
+  currentThread 
+}: ChatContentProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   
   const threadMessagesOptions = useMemo(
@@ -249,16 +256,18 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
   // and always apply useSmoothText to the last assistant message
   const isStreaming = messages.isLoading && uiMessages.length > 0;
 
-  // Get current thread info for header - only query if authenticated and not loading
-  const shouldQueryThreads = isAuthenticated && !isLoading;
+  // Use cached threads if available, otherwise query (fallback for backward compatibility)
+  const shouldQueryThreads = isAuthenticated && !isLoading && !cachedThreads;
   
-  const threads = useConvexQuery(
+  const queriedThreads = useConvexQuery(
     api.threads.listThreadsByUserId, 
     shouldQueryThreads ? {
       paginationOpts: { numItems: 50, cursor: null },
     } : "skip"
   );
-  const currentThread = threads?.page.find(
+  
+  const threads = cachedThreads || queriedThreads;
+  const threadForHeader = currentThread || threads?.page?.find(
     (t: any) => t._id === activeThreadId,
   );
 
@@ -280,7 +289,7 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
       <header className="bg-background z-10 flex h-16 w-full shrink-0 items-center gap-2 border-b px-4">
         <SidebarTrigger className="-ml-1" />
         <div className="text-foreground">
-          {currentThread?.title || "New Chat"}
+          {threadForHeader?.title || "New Chat"}
         </div>
       </header>
 

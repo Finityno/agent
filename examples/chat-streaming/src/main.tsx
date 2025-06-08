@@ -62,6 +62,13 @@ function AppWithAuth() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ConvexAuthProvider client={convex}>
+      {/* 
+        ConvexQueryCacheProvider provides intelligent caching across the entire app:
+        - Eliminates redundant queries when switching between pages
+        - Caches thread lists, messages, and user data
+        - Automatically invalidates cache when data changes
+        - Provides instant navigation between chats without loading states
+      */}
       <ConvexQueryCacheProvider>
         <AppWithAuth />
       </ConvexQueryCacheProvider>

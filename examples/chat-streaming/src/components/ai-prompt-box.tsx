@@ -3,6 +3,13 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ArrowUp, Paperclip, Square, X, StopCircle, Mic, Globe, BrainCog, FolderCode } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // Utility function for className merging
 const cn = (...classes: (string | undefined | null | false)[]) => classes.filter(Boolean).join(" ");
@@ -452,8 +459,18 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
   const [showSearch, setShowSearch] = React.useState(false);
   const [showThink, setShowThink] = React.useState(false);
   const [showCanvas, setShowCanvas] = React.useState(false);
+  const [selectedModel, setSelectedModel] = React.useState("claude-3.5-sonnet");
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const promptBoxRef = React.useRef<HTMLDivElement>(null);
+
+  // Available AI models
+  const availableModels = [
+    { id: "claude-3.5-sonnet", name: "Claude 3.5 Sonnet", description: "Most capable model" },
+    { id: "claude-3-haiku", name: "Claude 3 Haiku", description: "Fast and efficient" },
+    { id: "gpt-4o", name: "GPT-4o", description: "OpenAI's latest" },
+    { id: "gpt-4o-mini", name: "GPT-4o Mini", description: "Faster and cheaper" },
+    { id: "gemini-pro", name: "Gemini Pro", description: "Google's advanced model" },
+  ];
 
   const handleToggleChange = (value: string) => {
     if (value === "search") {
@@ -530,6 +547,8 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
     document.addEventListener("paste", handlePaste);
     return () => document.removeEventListener("paste", handlePaste);
   }, [handlePaste]);
+
+
 
   const handleSubmit = () => {
     if (input.trim() || files.length > 0) {
@@ -659,6 +678,28 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
                 />
               </button>
             </PromptInputAction>
+
+            <div className="relative">
+              <Select value={selectedModel} onValueChange={setSelectedModel}>
+                <SelectTrigger className="w-40 h-8 bg-transparent border-transparent text-[#9CA3AF] hover:text-[#D1D5DB] hover:bg-gray-600/30 transition-colors text-sm">
+                  <SelectValue placeholder="Select model" />
+                </SelectTrigger>
+                <SelectContent className="bg-[#1F2023] border-[#444444]">
+                  {availableModels.map((model) => (
+                    <SelectItem 
+                      key={model.id} 
+                      value={model.id}
+                      className="text-white hover:bg-[#2A2A2A] focus:bg-[#2A2A2A]"
+                    >
+                      <div className="flex flex-col">
+                        <span className="font-medium">{model.name}</span>
+                        <span className="text-xs text-gray-400">{model.description}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
             <div className="flex items-center">
               <button

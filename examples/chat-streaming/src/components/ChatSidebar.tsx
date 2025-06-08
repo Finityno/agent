@@ -23,6 +23,7 @@ import {
 interface ChatSidebarProps {
   activeThreadId: Id<"threads"> | null;
   setActiveThreadId: (id: Id<"threads"> | null, uuid?: string) => void;
+  threads?: any; // Cached threads data to avoid duplicate queries
 }
 
 interface Thread {
@@ -33,21 +34,33 @@ interface Thread {
   updatedAt: number;
 }
 
+interface GroupedThreads {
+  today: Thread[];
+  last7Days: Thread[];
+  last30Days: Thread[];
+  older: Thread[];
+}
+
 export function ChatSidebar({
   activeThreadId,
   setActiveThreadId,
+  threads: cachedThreads,
 }: ChatSidebarProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const [isCreating, setIsCreating] = useState(false);
+  const [hoveredThreadId, setHoveredThreadId] = useState<Id<"threads"> | null>(null);
   
-  const shouldQueryThreads = isAuthenticated && !isLoading;
+  // Use cached threads if available, otherwise query
+  const shouldQueryThreads = isAuthenticated && !isLoading && !cachedThreads;
   
-  const threads = useConvexQuery(
+  const queriedThreads = useConvexQuery(
     api.threads.listThreadsByUserId, 
     shouldQueryThreads ? {
       paginationOpts: { numItems: 50, cursor: null },
     } : "skip"
   );
+  
+  const threads = cachedThreads || queriedThreads;
   
   const createThread = useMutation(api.chatStreaming.createThread);
   const deleteThread = useMutation(api.threads.deleteThread);
@@ -99,19 +112,94 @@ export function ChatSidebar({
     }
   };
 
-  const formatDate = (timestamp: number) => {
-    const date = new Date(timestamp);
+
+
+  const groupThreadsByTime = (threads: Thread[]): GroupedThreads => {
     const now = new Date();
-    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
-    
-    if (diffInHours < 24) {
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (diffInHours < 24 * 7) {
-      return date.toLocaleDateString([], { weekday: 'short' });
-    } else {
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    }
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const last7Days = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const last30Days = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    return threads.reduce(
+      (groups, thread) => {
+        const threadDate = new Date(thread.updatedAt);
+        
+        if (threadDate >= today) {
+          groups.today.push(thread);
+        } else if (threadDate >= last7Days) {
+          groups.last7Days.push(thread);
+        } else if (threadDate >= last30Days) {
+          groups.last30Days.push(thread);
+        } else {
+          groups.older.push(thread);
+        }
+        
+        return groups;
+      },
+      { today: [], last7Days: [], last30Days: [], older: [] } as GroupedThreads
+    );
   };
+
+  const renderThreadGroup = (title: string, threads: Thread[]) => {
+    if (threads.length === 0) return null;
+
+    return (
+      <div key={title} className="mb-6">
+        <div className="px-4 py-2 text-xs font-medium text-muted-foreground">
+          {title}
+        </div>
+        <div className="space-y-1">
+          {threads.map((thread: Thread) => (
+            <div
+              key={thread._id}
+              className={`relative flex items-center mx-2 rounded-sm transition-colors duration-200 ${
+                hoveredThreadId === thread._id ? 'bg-accent/50' : ''
+              } ${activeThreadId === thread._id ? 'bg-accent' : ''}`}
+              onMouseEnter={() => setHoveredThreadId(thread._id)}
+              onMouseLeave={() => setHoveredThreadId(null)}
+            >
+              <SidebarMenuButton
+                isActive={activeThreadId === thread._id}
+                onClick={() => handleThreadClick(thread)}
+                className="flex-1 justify-start pr-8 hover:bg-transparent rounded-sm"
+              >
+                <div className="flex items-center min-w-0 flex-1">
+                  <span className="truncate text-sm font-normal">
+                    {thread.title || "New Chat"}
+                  </span>
+                </div>
+              </SidebarMenuButton>
+              
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={`absolute right-2 h-6 w-6 p-0 rounded-sm transition-opacity duration-200 ${
+                      hoveredThreadId === thread._id ? 'opacity-100' : 'opacity-0'
+                    }`}
+                  >
+                    <MoreHorizontal className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={(e) => handleDeleteThread(thread._id, e)}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const groupedThreads = threads?.page ? groupThreadsByTime(threads.page) : null;
 
   return (
     <Sidebar>
@@ -130,7 +218,7 @@ export function ChatSidebar({
         <div className="px-4">
           <Button
             variant="outline"
-            className="mb-4 flex w-full items-center gap-2"
+            className="mb-4 flex w-full items-center gap-2 rounded-sm"
             onClick={handleCreateThread}
             disabled={isCreating}
           >
@@ -138,49 +226,15 @@ export function ChatSidebar({
             <span>{isCreating ? "Creating..." : "New Chat"}</span>
           </Button>
         </div>
-        <SidebarMenu className="px-2">
-          {threads?.page.map((thread: Thread) => (
-            <div
-              key={thread._id}
-              className="group relative flex items-center"
-            >
-              <SidebarMenuButton
-                isActive={activeThreadId === thread._id}
-                onClick={() => handleThreadClick(thread)}
-                className="flex-1 justify-start pr-8"
-              >
-                <div className="flex flex-col items-start min-w-0 flex-1">
-                  <span className="truncate text-sm font-medium">
-                    {thread.title || "New Chat"}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {formatDate(thread.updatedAt)}
-                  </span>
-                </div>
-              </SidebarMenuButton>
-              
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute right-1 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0"
-                  >
-                    <MoreHorizontal className="h-3 w-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    onClick={(e) => handleDeleteThread(thread._id, e)}
-                    className="text-destructive focus:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          ))}
+        <SidebarMenu className="px-0">
+          {groupedThreads && (
+            <>
+              {renderThreadGroup("Today", groupedThreads.today)}
+              {renderThreadGroup("Last 7 days", groupedThreads.last7Days)}
+              {renderThreadGroup("Last 30 days", groupedThreads.last30Days)}
+              {renderThreadGroup("Older", groupedThreads.older)}
+            </>
+          )}
           
           {threads?.page.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
