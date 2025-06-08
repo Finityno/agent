@@ -22,7 +22,7 @@ import {
   Pencil,
   Trash,
 } from "lucide-react"
-import { useRef, memo } from "react"
+import { useRef, memo, useMemo } from "react"
 import { useMutation } from "convex/react"
 import { useQuery } from "convex-helpers/react/cache";
 import { api } from "../../convex/_generated/api"
@@ -30,7 +30,6 @@ import { Id } from "../../convex/_generated/dataModel"
 import {
   useThreadMessages,
   toUIMessages,
-  optimisticallySendMessage,
 } from "@convex-dev/agent/react"
 
 interface ChatContentProps {
@@ -152,18 +151,49 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
 MemoizedMessage.displayName = "MemoizedMessage";
 
 function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
+  const threadMessagesOptions = useMemo(
+    () => ({ initialNumItems: 10, stream: true }),
+    [],
+  );
   const messages = useThreadMessages(
     api.chatStreaming.listThreadMessages,
     activeThreadId ? { threadId: activeThreadId } : "skip",
-    { initialNumItems: 10, stream: true },
+    threadMessagesOptions,
   );
   const sendMessageAndUpdateThread = useMutation(
     api.chatStreaming.sendMessageAndUpdateThread,
   ).withOptimisticUpdate((store, args) => {
-    optimisticallySendMessage(api.chatStreaming.listThreadMessages)(store, {
-      threadId: args.threadId,
-      prompt: args.prompt,
-    });
+    const { threadId, prompt } = args;
+    const existingMessages = store.getQuery(api.chatStreaming.listThreadMessages, { threadId });
+    if (existingMessages) {
+      store.setQuery(
+        api.chatStreaming.listThreadMessages,
+        { threadId },
+        {
+          ...existingMessages,
+          results: [
+            ...existingMessages.results,
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: prompt,
+                },
+              ],
+              key: "optimistic-" + Date.now(),
+              message: {
+                _id: `optimistic-${Date.now()}` as Id<"messages">,
+                _creationTime: Date.now(),
+                body: prompt,
+                threadId,
+                isOptimistic: true,
+              },
+            },
+          ],
+        },
+      );
+    }
     const existing = store.getQuery(api.threads.listThreadsByUserId, {
       paginationOpts: { numItems: 50, cursor: null },
     });

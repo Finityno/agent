@@ -155,7 +155,12 @@ export const listThreadMessages = query({
       streamArgs 
     });
     
-    return { ...paginated, streams };
+    const combinedMessages = paginated.page.map((message: any) => ({
+      ...message,
+      isOptimistic: false,
+    }));
+
+    return { ...paginated, page: combinedMessages, streams };
   },
 });
 
