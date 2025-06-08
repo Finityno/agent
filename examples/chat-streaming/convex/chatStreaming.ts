@@ -1,7 +1,8 @@
 import { paginationOptsValidator } from "convex/server";
 import { Agent, vStreamArgs } from "@convex-dev/agent";
 import { components, internal } from "./_generated/api";
-import { chat, textEmbedding } from "../../../example/examplesModels";
+import { agents, recommendAgent, createCustomAgent } from "./lib/agents";
+import { getAvailableModels } from "./lib/models";
 import {
   action,
   ActionCtx,
@@ -17,13 +18,8 @@ import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { v4 as uuidv4 } from "uuid";
 
-// Define an agent similarly to the AI SDK
-export const storyAgent = new Agent(components.agent, {
-  name: "Story Agent",
-  chat: chat,
-  textEmbedding: textEmbedding,
-  instructions: "You tell stories with twist endings. ~ 200 words.",
-});
+// Use the improved agent system - default to fast agent for quick responses
+export const defaultAgent = agents.fast;
 
 // Streaming, where generate the prompt message first, then asynchronously
 // generate the stream response.
@@ -77,7 +73,7 @@ export const createAgentThreadAndSaveMessage = internalAction({
     
     // Create agent thread if it doesn't exist
     if (!agentThreadId) {
-      const { threadId: newAgentThreadId } = await storyAgent.createThread(ctx, { userId });
+      const { threadId: newAgentThreadId } = await defaultAgent.createThread(ctx, { userId });
       agentThreadId = newAgentThreadId;
       
       // Update the local thread with the agent thread ID
@@ -88,24 +84,24 @@ export const createAgentThreadAndSaveMessage = internalAction({
     }
     
     // Save the message using the agent's thread ID
-    const { messageId } = await storyAgent.saveMessage(ctx, {
+    const { messageId } = await defaultAgent.saveMessage(ctx, {
       threadId: agentThreadId,
       prompt,
       skipEmbeddings: true,
     });
     
-    // Now stream the story using the agent's thread ID
-    await ctx.scheduler.runAfter(0, internal.chatStreaming.streamStory, {
+    // Now stream the response using the agent's thread ID
+    await ctx.scheduler.runAfter(0, internal.chatStreaming.streamResponse, {
       threadId: agentThreadId,
       promptMessageId: messageId,
     });
   },
 });
 
-export const streamStory = internalAction({
+export const streamResponse = internalAction({
   args: { promptMessageId: v.string(), threadId: v.string() },
   handler: async (ctx, { promptMessageId, threadId }) => {
-    const { thread } = await storyAgent.continueThread(ctx, { threadId });
+    const { thread } = await defaultAgent.continueThread(ctx, { threadId });
     const result = await thread.streamText(
       { promptMessageId },
       { saveStreamDeltas: true },
@@ -146,11 +142,11 @@ export const listThreadMessages = query({
     }
     
     // Use the agent's built-in functions as recommended in the documentation
-    const paginated = await storyAgent.listMessages(ctx, { 
+    const paginated = await defaultAgent.listMessages(ctx, { 
       threadId: localThread.agentThreadId, 
       paginationOpts 
     });
-    const streams = await storyAgent.syncStreams(ctx, { 
+    const streams = await defaultAgent.syncStreams(ctx, { 
       threadId: localThread.agentThreadId, 
       streamArgs 
     });
@@ -290,5 +286,274 @@ export const sendMessageAndUpdateThread = mutation({
         updatedAt: Date.now(),
       });
     }
+  },
+});
+
+// New functions for the improved model and agent system
+
+/**
+ * Get all available models with their configurations
+ */
+export const getAvailableModelsQuery = query({
+  args: {},
+  handler: async (ctx) => {
+    return getAvailableModels();
+  },
+});
+
+/**
+ * Get all available agents with their configurations
+ */
+export const getAvailableAgentsQuery = query({
+  args: {},
+  handler: async (ctx) => {
+    const { getAvailableAgents } = await import("./lib/agents");
+    return getAvailableAgents();
+  },
+});
+
+/**
+ * Send message with a specific model
+ */
+export const sendMessageWithModel = mutation({
+  args: {
+    threadId: v.id("threads"),
+    prompt: v.string(),
+    modelId: v.string(),
+    isFirstMessage: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { threadId, prompt, modelId, isFirstMessage = false }) => {
+    await authorizeThreadAccess(ctx, threadId);
+    const userId = await getUserId(ctx);
+
+    // Schedule the agent action with specific model
+    await ctx.scheduler.runAfter(0, internal.chatStreaming.createAgentThreadWithModel, {
+      threadId,
+      prompt,
+      userId,
+      modelId,
+    });
+
+    // Update thread metadata
+    if (isFirstMessage) {
+      const title = prompt.length > 50 ? prompt.substring(0, 47) + "..." : prompt;
+      await ctx.db.patch(threadId, {
+        title,
+        updatedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.patch(threadId, {
+        updatedAt: Date.now(),
+      });
+    }
+  },
+});
+
+/**
+ * Create agent thread with a specific model
+ */
+export const createAgentThreadWithModel = internalAction({
+  args: {
+    prompt: v.string(),
+    threadId: v.string(),
+    userId: v.string(),
+    modelId: v.string(),
+  },
+  handler: async (ctx, { prompt, threadId, userId, modelId }) => {
+    // Get the local thread
+    const localThread = await ctx.runQuery(internal.chatStreaming.getLocalThread, { threadId });
+    if (!localThread) {
+      throw new Error("Local thread not found");
+    }
+
+    let agentThreadId = localThread.agentThreadId;
+
+    // Create a custom agent with the specified model
+    const customAgent = createCustomAgent({
+      name: "Custom Chat Agent",
+      chatModel: modelId,
+      instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
+    });
+
+    // Create agent thread if it doesn't exist
+    if (!agentThreadId) {
+      const { threadId: newAgentThreadId } = await customAgent.createThread(ctx, { userId });
+      agentThreadId = newAgentThreadId;
+
+      // Update the local thread with the agent thread ID
+      await ctx.runMutation(internal.chatStreaming.updateLocalThreadAgentId, {
+        threadId,
+        agentThreadId,
+      });
+    }
+
+    // Save the message using the custom agent
+    const { messageId } = await customAgent.saveMessage(ctx, {
+      threadId: agentThreadId,
+      prompt,
+      skipEmbeddings: true,
+    });
+
+    // Stream the response using the custom agent
+    await ctx.scheduler.runAfter(0, internal.chatStreaming.streamWithCustomAgent, {
+      threadId: agentThreadId,
+      promptMessageId: messageId,
+      modelId,
+    });
+  },
+});
+
+/**
+ * Stream response with custom agent
+ */
+export const streamWithCustomAgent = internalAction({
+  args: {
+    promptMessageId: v.string(),
+    threadId: v.string(),
+    modelId: v.string(),
+  },
+  handler: async (ctx, { promptMessageId, threadId, modelId }) => {
+    // Create a custom agent with the specified model
+    const customAgent = createCustomAgent({
+      name: "Custom Chat Agent",
+      chatModel: modelId,
+      instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
+    });
+
+    const { thread } = await customAgent.continueThread(ctx, { threadId });
+    const result = await thread.streamText(
+      { promptMessageId },
+      { saveStreamDeltas: true }
+    );
+    await result.consumeStream();
+  },
+});
+
+/**
+ * Send message with intelligent agent selection
+ */
+export const sendMessageWithSmartAgent = mutation({
+  args: {
+    threadId: v.id("threads"),
+    prompt: v.string(),
+    isFirstMessage: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { threadId, prompt, isFirstMessage = false }) => {
+    await authorizeThreadAccess(ctx, threadId);
+    const userId = await getUserId(ctx);
+
+    // Schedule the agent action with smart agent selection
+    await ctx.scheduler.runAfter(0, internal.chatStreaming.createSmartAgentThread, {
+      threadId,
+      prompt,
+      userId,
+    });
+
+    // Update thread metadata
+    if (isFirstMessage) {
+      const title = prompt.length > 50 ? prompt.substring(0, 47) + "..." : prompt;
+      await ctx.db.patch(threadId, {
+        title,
+        updatedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.patch(threadId, {
+        updatedAt: Date.now(),
+      });
+    }
+  },
+});
+
+/**
+ * Create agent thread with intelligent agent selection
+ */
+export const createSmartAgentThread = internalAction({
+  args: {
+    prompt: v.string(),
+    threadId: v.string(),
+    userId: v.string(),
+  },
+  handler: async (ctx, { prompt, threadId, userId }) => {
+    // Get the local thread
+    const localThread = await ctx.runQuery(internal.chatStreaming.getLocalThread, { threadId });
+    if (!localThread) {
+      throw new Error("Local thread not found");
+    }
+
+    let agentThreadId = localThread.agentThreadId;
+
+    // Recommend the best agent based on the prompt
+    const recommendedAgentType = recommendAgent(prompt);
+    const selectedAgent = agents[recommendedAgentType];
+
+    // Create agent thread if it doesn't exist
+    if (!agentThreadId) {
+      const { threadId: newAgentThreadId } = await selectedAgent.createThread(ctx, { userId });
+      agentThreadId = newAgentThreadId;
+
+      // Update the local thread with the agent thread ID
+      await ctx.runMutation(internal.chatStreaming.updateLocalThreadAgentId, {
+        threadId,
+        agentThreadId,
+      });
+    }
+
+    // Save the message using the selected agent
+    const { messageId } = await selectedAgent.saveMessage(ctx, {
+      threadId: agentThreadId,
+      prompt,
+      skipEmbeddings: true,
+    });
+
+    // Stream the response using the selected agent
+    await ctx.scheduler.runAfter(0, internal.chatStreaming.streamWithSelectedAgent, {
+      threadId: agentThreadId,
+      promptMessageId: messageId,
+      agentType: recommendedAgentType,
+    });
+  },
+});
+
+/**
+ * Stream response with selected agent
+ */
+export const streamWithSelectedAgent = internalAction({
+  args: {
+    promptMessageId: v.string(),
+    threadId: v.string(),
+    agentType: v.string(),
+  },
+  handler: async (ctx, { promptMessageId, threadId, agentType }) => {
+    const selectedAgent = agents[agentType as keyof typeof agents] || agents.chat;
+    const { thread } = await selectedAgent.continueThread(ctx, { threadId });
+    const result = await thread.streamText(
+      { promptMessageId },
+      { saveStreamDeltas: true }
+    );
+    await result.consumeStream();
+  },
+});
+
+/**
+ * Get model usage statistics
+ */
+export const getModelUsageStats = query({
+  args: {
+    timeRange: v.optional(v.union(v.literal("day"), v.literal("week"), v.literal("month"))),
+  },
+  handler: async (ctx, { timeRange = "week" }) => {
+    // In a real implementation, you would query usage data from your database
+    // This is a mock implementation
+    return {
+      totalRequests: 1250,
+      totalTokens: 125000,
+      topModels: [
+        { model: "gpt-4o-mini", requests: 450, tokens: 45000 },
+        { model: "claude-3-5-sonnet-20241022", requests: 320, tokens: 38000 },
+        { model: "gpt-4o", requests: 280, tokens: 32000 },
+      ],
+      costEstimate: 12.50,
+      timeRange,
+    };
   },
 });

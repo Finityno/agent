@@ -11,6 +11,9 @@
 import type * as auth from "../auth.js";
 import type * as chatStreaming from "../chatStreaming.js";
 import type * as http from "../http.js";
+import type * as lib_agents from "../lib/agents.js";
+import type * as lib_models from "../lib/models.js";
+import type * as lib_tools from "../lib/tools.js";
 import type * as threads from "../threads.js";
 import type * as users from "../users.js";
 
@@ -32,6 +35,9 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   chatStreaming: typeof chatStreaming;
   http: typeof http;
+  "lib/agents": typeof lib_agents;
+  "lib/models": typeof lib_models;
+  "lib/tools": typeof lib_tools;
   threads: typeof threads;
   users: typeof users;
 }>;

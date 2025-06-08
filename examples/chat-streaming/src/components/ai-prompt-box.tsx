@@ -459,18 +459,25 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
   const [showSearch, setShowSearch] = React.useState(false);
   const [showThink, setShowThink] = React.useState(false);
   const [showCanvas, setShowCanvas] = React.useState(false);
-  const [selectedModel, setSelectedModel] = React.useState("claude-3.5-sonnet");
+  const [selectedModel, setSelectedModel] = React.useState("gpt-4.1");
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const promptBoxRef = React.useRef<HTMLDivElement>(null);
 
-  // Available AI models
-  const availableModels = [
-    { id: "claude-3.5-sonnet", name: "Claude 3.5 Sonnet", description: "Most capable model" },
-    { id: "claude-3-haiku", name: "Claude 3 Haiku", description: "Fast and efficient" },
-    { id: "gpt-4o", name: "GPT-4o", description: "OpenAI's latest" },
-    { id: "gpt-4o-mini", name: "GPT-4o Mini", description: "Faster and cheaper" },
-    { id: "gemini-pro", name: "Gemini Pro", description: "Google's advanced model" },
-  ];
+  // Available AI models - will be loaded from backend
+  const [availableModels, setAvailableModels] = React.useState([
+    { id: "gpt-4.1", name: "GPT-4.1", description: "Latest and most advanced GPT model", provider: "openai", category: "powerful" },
+    { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", description: "Ultra-fast and efficient latest model", provider: "openai", category: "fast" },
+    { id: "claude-4-sonnet-20250514", name: "Claude 4 Sonnet", description: "Latest and most capable Claude model", provider: "anthropic", category: "powerful" },
+    { id: "gemini-2.5-pro-preview-06-05", name: "Gemini 2.5 Pro", description: "Latest and most advanced Gemini model", provider: "google", category: "powerful" },
+    { id: "gemini-2.5-flash-preview-05-20", name: "Gemini 2.5 Flash", description: "Ultra-fast latest Gemini model", provider: "google", category: "fast" },
+  ]);
+
+  // Load available models from backend
+  React.useEffect(() => {
+    // In a real implementation, you would fetch from your Convex backend
+    // const models = await ctx.runQuery(api.chatStreaming.getAvailableModelsQuery);
+    // setAvailableModels(models);
+  }, []);
 
   const handleToggleChange = (value: string) => {
     if (value === "search") {
