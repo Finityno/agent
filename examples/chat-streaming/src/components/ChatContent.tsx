@@ -22,6 +22,7 @@ import {
   Pencil,
   Trash,
 } from "lucide-react"
+import { ResponseStream } from "./ui/response-stream"
 import { useRef, memo, useMemo } from "react"
 import { useMutation } from "convex/react"
 import { useQuery } from "convex-helpers/react/cache";
@@ -57,12 +58,18 @@ const MemoizedMessage = memo(({ message, index, uiMessagesLength }: {
     >
       {isAssistant ? (
         <div className="group flex w-full flex-col gap-0">
-          <MessageContent
-            className="text-foreground prose flex-1 rounded-lg bg-transparent p-0 ai-message-content"
-            markdown
-          >
-            {displayContent}
-          </MessageContent>
+          {(message as any).isStreaming ? (
+            <div className="text-foreground prose flex-1 rounded-lg bg-transparent p-0 ai-message-content">
+              <ResponseStream textStream={displayContent} as="div" />
+            </div>
+          ) : (
+            <MessageContent
+              className="text-foreground prose flex-1 rounded-lg bg-transparent p-0 ai-message-content"
+              markdown
+            >
+              {displayContent}
+            </MessageContent>
+          )}
           <MessageActions
             className={cn(
               "-ml-2.5 flex gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100",
@@ -164,15 +171,21 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
     api.chatStreaming.sendMessageAndUpdateThread,
   ).withOptimisticUpdate((store, args) => {
     const { threadId, prompt } = args;
-    const existingMessages = store.getQuery(api.chatStreaming.listThreadMessages, { threadId });
+    const existingMessages = store.getQuery(api.chatStreaming.listThreadMessages, {
+      threadId,
+      paginationOpts: { numItems: 10, cursor: null },
+    });
     if (existingMessages) {
       store.setQuery(
         api.chatStreaming.listThreadMessages,
-        { threadId },
+        {
+          threadId,
+          paginationOpts: { numItems: 10, cursor: null },
+        },
         {
           ...existingMessages,
-          results: [
-            ...existingMessages.results,
+          page: [
+            ...existingMessages.page,
             {
               role: "user",
               content: [
@@ -198,14 +211,14 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
       paginationOpts: { numItems: 50, cursor: null },
     });
     if (existing) {
-      const existingThread = existing.page.find((t) => t._id === args.threadId);
+      const existingThread = existing.page.find((t: any) => t._id === args.threadId);
       if (existingThread) {
         store.setQuery(
           api.threads.listThreadsByUserId,
           { paginationOpts: { numItems: 50, cursor: null } },
           {
             ...existing,
-            page: existing.page.map((t) =>
+            page: existing.page.map((t: any) =>
               t._id === args.threadId
                 ? {
                     ...t,
@@ -239,7 +252,7 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
       setActiveThreadId(threadId);
     }
 
-    const isFirstMessage = !messages.results || messages.results.length === 0;
+    const isFirstMessage = !messages?.results || messages.results.length === 0;
 
     sendMessageAndUpdateThread({
       prompt: prompt.trim(),
@@ -252,13 +265,15 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
     }
   };
 
-  const uiMessages = toUIMessages(messages.results ?? []);
+  const uiMessages = toUIMessages(messages?.results ?? []);
 
   // Get current thread info for header
   const threads = useQuery(api.threads.listThreadsByUserId, {
     paginationOpts: { numItems: 50, cursor: null },
   });
-  const currentThread = threads?.page.find((t: any) => t._id === activeThreadId);
+  const currentThread = threads?.page.find(
+    (t: any) => t._id === activeThreadId,
+  );
 
   if (!activeThreadId) {
     return (
@@ -304,6 +319,7 @@ function ChatContent({ activeThreadId, setActiveThreadId }: ChatContentProps) {
         <PromptInputBox
           onSend={handleSubmit}
           isLoading={messages.isLoading}
+          onCancel={() => window.location.reload()}
           placeholder="Ask anything..."
         />
       </div>
