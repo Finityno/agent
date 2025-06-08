@@ -1,104 +1,113 @@
 "use client"
 
+import { useMutation } from "convex/react";
+import { useQuery } from "convex-helpers/react/cache";
+import { api } from "../../convex/_generated/api";
+import { Id } from "../../convex/_generated/dataModel";
 import {
   Sidebar,
   SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
-} from "@/components/ui/sidebar"
-import { Button } from "@/components/ui/button"
-import { PlusIcon, Search } from "lucide-react"
+} from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
+import { PlusIcon, Search, Trash2, MoreHorizontal } from "lucide-react";
+import { useState, useEffect } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-// Initial conversation history
-const conversationHistory = [
-  {
-    period: "Today",
-    conversations: [
-      {
-        id: "t1",
-        title: "Project roadmap discussion",
-        lastMessage:
-          "Let's prioritize the authentication features for the next sprint.",
-        timestamp: new Date().setHours(new Date().getHours() - 2),
-      },
-      {
-        id: "t2",
-        title: "API Documentation Review",
-        lastMessage:
-          "The endpoint descriptions need more detail about rate limiting.",
-        timestamp: new Date().setHours(new Date().getHours() - 5),
-      },
-      {
-        id: "t3",
-        title: "Frontend Bug Analysis",
-        lastMessage:
-          "I found the issue - we need to handle the null state in the user profile component.",
-        timestamp: new Date().setHours(new Date().getHours() - 8),
-      },
-    ],
-  },
-  {
-    period: "Yesterday",
-    conversations: [
-      {
-        id: "y1",
-        title: "Database Schema Design",
-        lastMessage:
-          "Let's add indexes to improve query performance on these tables.",
-        timestamp: new Date().setDate(new Date().getDate() - 1),
-      },
-      {
-        id: "y2",
-        title: "Performance Optimization",
-        lastMessage:
-          "The lazy loading implementation reduced initial load time by 40%.",
-        timestamp: new Date().setDate(new Date().getDate() - 1),
-      },
-    ],
-  },
-  {
-    period: "Last 7 days",
-    conversations: [
-      {
-        id: "w1",
-        title: "Authentication Flow",
-        lastMessage: "We should implement the OAuth2 flow with refresh tokens.",
-        timestamp: new Date().setDate(new Date().getDate() - 3),
-      },
-      {
-        id: "w2",
-        title: "Component Library",
-        lastMessage:
-          "These new UI components follow the design system guidelines perfectly.",
-        timestamp: new Date().setDate(new Date().getDate() - 5),
-      },
-      {
-        id: "w3",
-        title: "UI/UX Feedback",
-        lastMessage:
-          "The navigation redesign received positive feedback from the test group.",
-        timestamp: new Date().setDate(new Date().getDate() - 6),
-      },
-    ],
-  },
-  {
-    period: "Last month",
-    conversations: [
-      {
-        id: "m1",
-        title: "Initial Project Setup",
-        lastMessage:
-          "All the development environments are now configured consistently.",
-        timestamp: new Date().setDate(new Date().getDate() - 15),
-      },
-    ],
-  },
-]
+interface ChatSidebarProps {
+  activeThreadId: Id<"threads"> | null;
+  setActiveThreadId: (id: Id<"threads"> | null, uuid?: string) => void;
+}
 
-export function ChatSidebar() {
+interface Thread {
+  _id: Id<"threads">;
+  uuid?: string;
+  title?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export function ChatSidebar({
+  activeThreadId,
+  setActiveThreadId,
+}: ChatSidebarProps) {
+  const [isCreating, setIsCreating] = useState(false);
+  
+  const threads = useQuery(api.threads.listThreadsByUserId, {
+    paginationOpts: { numItems: 50, cursor: null },
+  });
+  
+  const createThread = useMutation(api.chatStreaming.createThread);
+  const deleteThread = useMutation(api.threads.deleteThread);
+
+  // Track newly created thread to handle navigation
+  const [newlyCreatedThreadId, setNewlyCreatedThreadId] = useState<Id<"threads"> | null>(null);
+
+  // Handle navigation for newly created threads when threads data updates
+  useEffect(() => {
+    if (newlyCreatedThreadId && threads?.page) {
+      const newThread = threads.page.find((t: Thread) => t._id === newlyCreatedThreadId);
+      if (newThread && newThread.uuid) {
+        setActiveThreadId(newlyCreatedThreadId, newThread.uuid);
+        setNewlyCreatedThreadId(null); // Clear the flag
+      }
+    }
+  }, [threads, newlyCreatedThreadId, setActiveThreadId]);
+
+  const handleCreateThread = async () => {
+    if (isCreating) return;
+    
+    setIsCreating(true);
+    try {
+      const id = await createThread();
+      setNewlyCreatedThreadId(id as Id<"threads">);
+      // Remove the immediate setActiveThreadId call to prevent double navigation
+      // The useEffect will handle setting the active thread once UUID is available
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleDeleteThread = async (threadId: Id<"threads">, e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    
+    if (activeThreadId === threadId) {
+      setActiveThreadId(null);
+    }
+    
+    await deleteThread({ threadId });
+  };
+
+  const handleThreadClick = (thread: Thread) => {
+    if (thread.uuid) {
+      setActiveThreadId(thread._id, thread.uuid);
+    } else {
+      // For threads without UUID, just use the Convex ID
+      setActiveThreadId(thread._id);
+    }
+  };
+
+  const formatDate = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
+    
+    if (diffInHours < 24) {
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } else if (diffInHours < 24 * 7) {
+      return date.toLocaleDateString([], { weekday: 'short' });
+    } else {
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+  };
+
   return (
     <Sidebar>
       <SidebarHeader className="flex flex-row items-center justify-between gap-2 px-2 py-4">
@@ -117,24 +126,64 @@ export function ChatSidebar() {
           <Button
             variant="outline"
             className="mb-4 flex w-full items-center gap-2"
+            onClick={handleCreateThread}
+            disabled={isCreating}
           >
             <PlusIcon className="size-4" />
-            <span>New Chat</span>
+            <span>{isCreating ? "Creating..." : "New Chat"}</span>
           </Button>
         </div>
-        {conversationHistory.map((group) => (
-          <SidebarGroup key={group.period}>
-            <SidebarGroupLabel>{group.period}</SidebarGroupLabel>
-            <SidebarMenu>
-              {group.conversations.map((conversation) => (
-                <SidebarMenuButton key={conversation.id}>
-                  <span>{conversation.title}</span>
-                </SidebarMenuButton>
-              ))}
-            </SidebarMenu>
-          </SidebarGroup>
-        ))}
+        <SidebarMenu className="px-2">
+          {threads?.page.map((thread: Thread) => (
+            <div
+              key={thread._id}
+              className="group relative flex items-center"
+            >
+              <SidebarMenuButton
+                isActive={activeThreadId === thread._id}
+                onClick={() => handleThreadClick(thread)}
+                className="flex-1 justify-start pr-8"
+              >
+                <div className="flex flex-col items-start min-w-0 flex-1">
+                  <span className="truncate text-sm font-medium">
+                    {thread.title || "New Chat"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {formatDate(thread.updatedAt)}
+                  </span>
+                </div>
+              </SidebarMenuButton>
+              
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-1 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0"
+                  >
+                    <MoreHorizontal className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={(e) => handleDeleteThread(thread._id, e)}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ))}
+          
+          {threads?.page.length === 0 && (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+              No conversations yet. Start a new chat to begin.
+            </div>
+          )}
+        </SidebarMenu>
       </SidebarContent>
     </Sidebar>
-  )
+  );
 }

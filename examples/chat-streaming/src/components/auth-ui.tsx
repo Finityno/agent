@@ -1,5 +1,8 @@
 import * as React from "react";
 import { useState, useId } from "react";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import { Slot } from "@radix-ui/react-slot";
 import * as LabelPrimitive from "@radix-ui/react-label";
 import { cva, type VariantProps } from "class-variance-authority";
@@ -114,7 +117,15 @@ PasswordInput.displayName = "PasswordInput";
 
 // FORM: SignInForm
 function SignInForm() {
-  const handleSignIn = (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); console.log("UI: Sign In form submitted"); };
+  const { signIn } = useAuthActions();
+  const handleSignIn = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    formData.append("flow", "signIn");
+    signIn("password", formData).catch((error) => {
+      console.error(error);
+    });
+  };
   return (
     <form onSubmit={handleSignIn} autoComplete="on" className="flex flex-col gap-8">
       <div className="flex flex-col items-center gap-2 text-center">
@@ -132,7 +143,23 @@ function SignInForm() {
 
 // FORM: SignUpForm
 function SignUpForm() {
-  const handleSignUp = (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); console.log("UI: Sign Up form submitted"); };
+  const { signIn } = useAuthActions();
+  const createUser = useMutation(api.users.createUser);
+  const handleSignUp = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const email = formData.get("email") as string;
+    const name = formData.get("name") as string;
+    formData.append("flow", "signUp");
+
+    signIn("password", formData)
+      .then(() => {
+        createUser({ name, email });
+      })
+      .catch((error) => {
+        console.error(error);
+      });
+  };
   return (
     <form onSubmit={handleSignUp} autoComplete="on" className="flex flex-col gap-8">
       <div className="flex flex-col items-center gap-2 text-center">

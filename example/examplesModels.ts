@@ -7,7 +7,7 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 // If you want to use different models for examples, you can change them here.
-export const chat = openai.chat("gpt-4o-mini");
+export const chat = openai.chat("gpt-4.1");
 export const textEmbedding = openai.textEmbeddingModel(
   "text-embedding-3-small",
 );
