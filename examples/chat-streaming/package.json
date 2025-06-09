@@ -10,7 +10,9 @@
     "predev": "npm run setup && npm i",
     "setup": "cd ../../ && npm i && npm run build",
     "logs": "convex logs",
-    "lint": "tsc -p convex && eslint convex"
+    "lint": "tsc -p convex && eslint convex",
+    "build": "vite build",
+    "start": "vite preview"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
