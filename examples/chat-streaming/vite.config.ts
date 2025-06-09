@@ -10,6 +10,8 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
     conditions: ['import', 'module', 'browser', 'default'],
+    // Ensure proper resolution of package exports
+    dedupe: ['@convex-dev/agent'],
   },
   server: {
     // Reduce logging verbosity
@@ -20,12 +22,14 @@ export default defineConfig({
   // Reduce build logging
   logLevel: 'warn',
   optimizeDeps: {
-    include: ['@convex-dev/agent']
+    include: ['@convex-dev/agent'],
+    // Force pre-bundling of the agent package
+    force: true
   },
   build: {
     rollupOptions: {
+      // Don't externalize the agent package - bundle it instead
       output: {
-        // Ensure proper chunking
         manualChunks: {
           'convex-agent': ['@convex-dev/agent']
         }
