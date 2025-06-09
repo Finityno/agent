@@ -268,10 +268,45 @@ function ChatContent({
     activeThreadId ? { threadId: activeThreadId } : "skip"
   );
   
-  // Memoize mutations to prevent unnecessary re-creations
-  const sendMessageAndUpdateThread = useMutation(
-    api.chatStreaming.sendMessageAndUpdateThread,
-  );
+    // Memoize mutations with optimistic updates for instant message display
+  const sendMessage = useMutation(api.chatStreaming.sendMessage)
+    .withOptimisticUpdate((store, args) => {
+      const { threadId, prompt } = args;
+      
+      // Get ALL queries for this function and find the one for this thread
+      const allQueries = store.getAllQueries(api.chatStreaming.listThreadMessages);
+      
+      // Find queries for this specific thread
+      const threadQueries = allQueries.filter(q => 
+        q.args && q.args.threadId === threadId.toString()
+      );
+      
+      if (threadQueries.length > 0) {
+        const { args: queryArgs, value } = threadQueries[0];
+        
+        if (value && value.page) {
+          // Create optimistic user message
+          const optimisticMessage = {
+            _id: `optimistic-${Date.now()}`,
+            _creationTime: Date.now(),
+            userId: "current-user",
+            threadId,
+            role: "user" as const,
+            content: prompt,
+            status: "success" as const,
+            tool: false,
+            order: value.page.length,
+            stepOrder: 0,
+          };
+
+          // Update the store with the exact query args that were found
+          store.setQuery(api.chatStreaming.listThreadMessages, queryArgs, {
+            ...value,
+            page: [...value.page, optimisticMessage]
+          });
+        }
+      }
+    });
   
   const createThread = useMutation(api.chatStreaming.createThread);
 
@@ -303,16 +338,14 @@ function ChatContent({
       setActiveThreadId(threadId);
     }
 
-    const isFirstMessage = !messages?.results || messages.results.length === 0;
-
-    sendMessageAndUpdateThread({
+    // Send message with optimistic updates - user sees message immediately
+    sendMessage({
       prompt: prompt.trim(),
       threadId,
-      isFirstMessage,
       modelId: modelId || "gpt-4.1-nano", // Default model if not specified
       attachmentIds: attachmentIds as any || [], // Pass storage IDs directly
     });
-  }, [activeThreadId, createThread, setActiveThreadId, messages?.results, sendMessageAndUpdateThread]);
+  }, [activeThreadId, createThread, setActiveThreadId, sendMessage]);
 
   // Memoize UI messages transformation
   const uiMessages = useMemo(() => toUIMessages(messages?.results ?? []), [messages?.results]);

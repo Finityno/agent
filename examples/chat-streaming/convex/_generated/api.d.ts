@@ -13,6 +13,7 @@ import type * as chatStreaming from "../chatStreaming.js";
 import type * as config_agents from "../config/agents.js";
 import type * as config_models from "../config/models.js";
 import type * as config_providers from "../config/providers.js";
+import type * as config_webSearchTools from "../config/webSearchTools.js";
 import type * as fileUpload from "../fileUpload.js";
 import type * as http from "../http.js";
 import type * as threads from "../threads.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   "config/agents": typeof config_agents;
   "config/models": typeof config_models;
   "config/providers": typeof config_providers;
+  "config/webSearchTools": typeof config_webSearchTools;
   fileUpload: typeof fileUpload;
   http: typeof http;
   threads: typeof threads;

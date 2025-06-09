@@ -2,8 +2,16 @@ import { z } from "zod";
 import { paginationOptsValidator } from "convex/server";
 import { Agent, vStreamArgs } from "@convex-dev/agent";
 import { components, internal } from "./_generated/api";
-import { ModelId, DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL, getAvailableModels } from "./config/models";
-import { createModelInstance, createEmbeddingInstance } from "./config/providers";
+import { ModelId, DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL, getAvailableModels, getModelConfig } from "./config/models";
+import { 
+  createModelInstance, 
+  createEmbeddingInstance, 
+  createModelInstanceWithAutoWebSearch,
+  getProviderWebSearchTools,
+  modelSupportsWebSearch,
+  ModelInstanceOptions,
+  getProviderWebSearchConfig
+} from "./config/providers";
 import { getAvailableAgents } from "./config/agents";
 import {
   action,
@@ -24,29 +32,166 @@ import { v4 as uuidv4 } from "uuid";
 const ThreadIdSchema = z.string();
 const PromptSchema = z.string().min(1, "Prompt cannot be empty");
 
-// Function to create agent with specific model
-async function createAgentWithModel(modelId: ModelId) {
-  const chatModel = createModelInstance(modelId);
+// Function to create agent with specific model and optional web search
+async function createAgentWithModel(modelId: ModelId, enableWebSearch: boolean = false) {
+  let chatModel;
+  let webSearchTools = {};
+  
+  if (enableWebSearch && modelSupportsWebSearch(modelId)) {
+    // Use the auto web search function to get model with web search enabled
+    const { model, webSearchTools: tools } = createModelInstanceWithAutoWebSearch(modelId);
+    chatModel = model;
+    if (tools) {
+      webSearchTools = tools;
+    }
+  } else {
+    chatModel = createModelInstance(modelId);
+  }
+  
   const embeddingModel = createEmbeddingInstance(DEFAULT_EMBEDDING_MODEL);
 
-  return new Agent(components.agent, {
-    name: `${modelId} Agent`,
+  const agent = new Agent(components.agent, {
+    name: `${modelId} Agent${enableWebSearch ? " (Web Search)" : ""}`,
     chat: chatModel,
     textEmbedding: embeddingModel,
-    instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
+    instructions: enableWebSearch 
+      ? "You are a helpful AI assistant with access to current web information. When users ask about recent events, current data, or need up-to-date information, use web search to provide accurate and timely responses. Always cite your sources when using web search results."
+      : "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
   });
+
+  return { agent, webSearchTools };
 }
 
 // Create a default agent instance for queries
-const defaultAgent = new Agent(components.agent, {
-  name: "Default Chat Agent",
-  chat: createModelInstance(DEFAULT_CHAT_MODEL),
-  textEmbedding: createEmbeddingInstance(DEFAULT_EMBEDDING_MODEL),
-  instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
+async function getDefaultAgent() {
+  const { agent } = await createAgentWithModel(DEFAULT_CHAT_MODEL, false);
+  return agent;
+}
+
+/**
+ * OPTIMISTIC MESSAGE SENDING
+ * This mutation immediately saves the user's message and schedules AI response generation.
+ * The user sees their message right away, then the AI response streams in.
+ */
+export const sendMessage = mutation({
+  args: { 
+    threadId: v.id("threads"), 
+    prompt: v.string(), 
+    modelId: v.optional(v.string()),
+    attachmentIds: v.optional(v.array(v.id("_storage"))),
+    enableWebSearch: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { threadId, prompt, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [], enableWebSearch = false }) => {
+    // Validate inputs with Zod
+    const validatedPrompt = PromptSchema.parse(prompt);
+    const validatedModelId = ModelId.parse(modelId);
+    
+    await authorizeThreadAccess(ctx, threadId);
+    const userId = await getUserId(ctx);
+    
+    // Get the local thread to find the agent thread ID
+    const localThread = await ctx.db.get(threadId);
+    if (!localThread) {
+      throw new Error("Thread not found");
+    }
+
+    let agentThreadId = localThread.agentThreadId;
+    
+    // Create agent thread if it doesn't exist
+    if (!agentThreadId) {
+      // Use the agent's createThread method to create the agent thread
+      const { agent } = await createAgentWithModel(validatedModelId, enableWebSearch);
+      const { threadId: newAgentThreadId } = await agent.createThread(ctx, { userId });
+      agentThreadId = newAgentThreadId;
+      
+      // Update the local thread with the agent thread ID
+      await ctx.db.patch(threadId, { agentThreadId });
+    }
+
+    // **KEY: Immediately save the user's message using agent.saveMessage**
+    // This makes the message visible right away for optimistic updates
+    const { agent } = await createAgentWithModel(validatedModelId, enableWebSearch);
+    const { messageId } = await agent.saveMessage(ctx, {
+      threadId: agentThreadId,
+      userId,
+      prompt: validatedPrompt,
+      skipEmbeddings: true, // We'll generate embeddings in the background
+    });
+
+    // Save attachment associations in our local messages table if needed
+    if (attachmentIds.length > 0) {
+      await ctx.db.insert("messages", {
+        threadId,
+        body: validatedPrompt,
+        userId,
+        attachments: attachmentIds,
+      });
+    }
+
+    // Schedule the AI response generation in the background
+    await ctx.scheduler.runAfter(0, internal.chatStreaming.generateAIResponse, {
+      threadId: agentThreadId,
+      promptMessageId: messageId,
+      modelId: validatedModelId,
+      attachmentIds,
+      enableWebSearch,
+    });
+
+    // Update thread timestamp
+    await ctx.db.patch(threadId, {
+      updatedAt: Date.now(),
+    });
+
+    return { messageId };
+  },
 });
 
-// Streaming, where generate the prompt message first, then asynchronously
-// generate the stream response.
+/**
+ * Background AI response generation with web search support
+ * This runs after the user message is already saved and visible
+ */
+export const generateAIResponse = internalAction({
+  args: { 
+    threadId: v.string(), 
+    promptMessageId: v.string(), 
+    modelId: v.string(),
+    attachmentIds: v.optional(v.array(v.id("_storage"))),
+    enableWebSearch: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { threadId, promptMessageId, modelId, attachmentIds = [], enableWebSearch = false }) => {
+    const validatedModelId = ModelId.parse(modelId);
+    const { agent, webSearchTools } = await createAgentWithModel(validatedModelId, enableWebSearch);
+    
+    // Generate embeddings for the user message
+    await agent.generateAndSaveEmbeddings(ctx, { messageIds: [promptMessageId] });
+    
+    // Continue the thread to generate AI response
+    const { thread } = await agent.continueThread(ctx, { threadId });
+    
+    // Generate streaming response with optional web search tools
+    const result = await thread.streamText(
+      { promptMessageId },
+      { 
+        saveStreamDeltas: true,
+        storageOptions: {
+          saveOutputMessages: true,
+          saveAnyInputMessages: false, // Already saved above
+        },
+        // Include web search tools if available
+        ...(webSearchTools && Object.keys(webSearchTools).length > 0 && {
+          tools: webSearchTools,
+        }),
+      }
+    );
+    
+    // Consume the stream to process all deltas
+    await result.consumeStream();
+  },
+});
+
+/**
+ * DEPRECATED - Use sendMessage instead for optimistic updates
+ */
 export const streamStoryAsynchronously = mutation({
   args: { 
     prompt: v.string(), 
@@ -54,58 +199,14 @@ export const streamStoryAsynchronously = mutation({
     modelId: v.optional(v.string()),
     attachmentIds: v.optional(v.array(v.id("_storage"))),
   },
-  handler: async (ctx, { prompt, threadId, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [] }) => {
-    // Validate inputs with Zod
-    const validatedPrompt = PromptSchema.parse(prompt);
-    const validatedThreadId = ThreadIdSchema.parse(threadId);
-    const validatedModelId = ModelId.parse(modelId);
-    
-    await authorizeThreadAccess(ctx, validatedThreadId as Id<"threads">);
-    
-    // Get the user ID in the mutation where we have auth context
-    const userId = await getUserId(ctx);
-    
-    // Schedule the agent thread creation and message saving in an action
-    // since agent operations require ActionCtx
-    await ctx.scheduler.runAfter(0, internal.chatStreaming.createAgentThreadAndSaveMessage, {
-      threadId: validatedThreadId,
-      prompt: validatedPrompt,
-      userId, // Pass the userId to the internal action
-      modelId: validatedModelId,
-      attachmentIds,
-    });
+  handler: async (ctx, args): Promise<{ messageId: string }> => {
+    throw new Error("streamStoryAsynchronously is deprecated. Use sendMessage instead for optimistic updates.");
   },
 });
 
-export const sendMessage = mutation({
-  args: { 
-    threadId: v.id("threads"), 
-    prompt: v.string(), 
-    modelId: v.optional(v.string()),
-    attachmentIds: v.optional(v.array(v.id("_storage"))),
-  },
-  handler: async (ctx, { threadId, prompt, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [] }) => {
-    // Validate inputs with Zod
-    const validatedPrompt = PromptSchema.parse(prompt);
-    const validatedModelId = ModelId.parse(modelId);
-    
-    await authorizeThreadAccess(ctx, threadId);
-
-    // Get the user ID in the mutation where we have auth context
-    const userId = await getUserId(ctx);
-
-    // Schedule the agent thread creation and message saving in an action
-    // since agent operations require ActionCtx
-    await ctx.scheduler.runAfter(0, internal.chatStreaming.createAgentThreadAndSaveMessage, {
-      threadId,
-      prompt: validatedPrompt,
-      userId,
-      modelId: validatedModelId,
-      attachmentIds,
-    });
-  },
-});
-
+/**
+ * DEPRECATED - Use generateAIResponse instead
+ */
 export const createAgentThreadAndSaveMessage = internalAction({
   args: { 
     prompt: v.string(), 
@@ -115,191 +216,24 @@ export const createAgentThreadAndSaveMessage = internalAction({
     attachmentIds: v.optional(v.array(v.id("_storage"))),
   },
   handler: async (ctx, { prompt, threadId, userId, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [] }) => {
-    // Validate inputs with Zod
-    const validatedPrompt = PromptSchema.parse(prompt);
-    const validatedThreadId = ThreadIdSchema.parse(threadId);
-    const validatedUserId = z.string().parse(userId);
-    const validatedModelId = ModelId.parse(modelId);
-    
-    // Get the local thread
-    const localThread = await ctx.runQuery(internal.chatStreaming.getLocalThread, { threadId: validatedThreadId });
-    if (!localThread) {
-      throw new Error("Local thread not found");
+    // Redirect to new implementation
+    const localThread = await ctx.runQuery(internal.chatStreaming.getLocalThread, { threadId });
+    if (!localThread?.agentThreadId) {
+      throw new Error("Agent thread not found - use sendMessage mutation instead");
     }
     
-    let agentThreadId = localThread.agentThreadId;
-    
-    // Create an agent with the specified model
-    const agent = await createAgentWithModel(validatedModelId);
-    
-    // Create agent thread if it doesn't exist
-    if (!agentThreadId) {
-      const { threadId: newAgentThreadId } = await agent.createThread(ctx, { userId: validatedUserId });
-      agentThreadId = newAgentThreadId;
-      
-      // Update the local thread with the agent thread ID
-      await ctx.runMutation(internal.chatStreaming.updateLocalThreadAgentId, {
-        threadId: validatedThreadId,
-        agentThreadId,
-      });
-    }
-    
-    // Build multimodal message content
-    const messageContent: Array<any> = [
-      { type: "text", text: validatedPrompt }
-    ];
-    
-    // Process attachments and convert to proper content blocks
-    if (attachmentIds.length > 0) {
-      for (const storageId of attachmentIds) {
-        try {
-          // Get file metadata from storage system table using runQuery
-          const metadata = await ctx.runQuery(internal.chatStreaming.getFileMetadata, { storageId });
-          if (!metadata) {
-            console.warn(`File metadata not found for storage ID: ${storageId}`);
-            continue;
-          }
-
-          // Get file URL
-          const fileUrl = await ctx.storage.getUrl(storageId);
-          if (!fileUrl) {
-            console.warn(`File URL not found for storage ID: ${storageId}`);
-            continue;
-          }
-
-          // Add appropriate content block based on file type
-          if (metadata.contentType?.startsWith('image/')) {
-            // For images, use image content block
-            messageContent.push({
-              type: "image",
-              image: new URL(fileUrl),
-              mimeType: metadata.contentType,
-            });
-          } else if (metadata.contentType === 'application/pdf' || 
-                     metadata.contentType?.includes('document') ||
-                     metadata.contentType?.startsWith('text/') ||
-                     metadata.contentType?.startsWith('audio/')) {
-            // For PDFs and other files, fetch the actual file data
-            try {
-              const response = await fetch(fileUrl);
-              if (response.ok) {
-                const fileData = await response.arrayBuffer();
-                messageContent.push({
-                  type: "file",
-                  data: fileData,
-                  mimeType: metadata.contentType,
-                  filename: `file_${storageId}`, // Optional filename
-                });
-              } else {
-                console.warn(`Failed to fetch file data for ${storageId}: ${response.status}`);
-                // Fallback: mention the file in text
-                messageContent.push({
-                  type: "text",
-                  text: `\n[File attached: ${metadata.contentType}, ${metadata.size} bytes]`
-                });
-              }
-            } catch (error) {
-              console.error(`Error fetching file data for ${storageId}:`, error);
-              // Fallback: mention the file in text
-              messageContent.push({
-                type: "text",
-                text: `\n[File attached: ${metadata.contentType}, ${metadata.size} bytes]`
-              });
-            }
-          } else {
-            // For other file types, mention them in text
-            messageContent.push({
-              type: "text",
-              text: `\n[File attached: ${metadata.contentType || 'unknown type'}, ${metadata.size} bytes]`
-            });
-          }
-        } catch (error) {
-          console.error(`Error processing attachment ${storageId}:`, error);
-        }
-      }
-    }
-    
-    // Save message attachments association for UI display if there are attachments
-    if (attachmentIds.length > 0) {
-      await ctx.runMutation(internal.chatStreaming.saveMessageAttachments, {
-        threadId: validatedThreadId,
-        messageContent: validatedPrompt,
-        attachmentIds,
-        userId: validatedUserId,
-      });
-    }
-    
-    // Continue with the existing thread and generate streaming text with deltas
-    const { thread } = await agent.continueThread(ctx, { threadId: agentThreadId });
-    
-    // Use streamText instead of generateText to enable real-time streaming with deltas
-    let result;
-    if (attachmentIds.length > 0) {
-      // Use multimodal messages format when attachments are present
-      result = await thread.streamText(
-        { 
-          messages: [
-            {
-              role: "user", 
-              content: messageContent
-            }
-          ]
-        },
-        { 
-          // Enable saving of stream deltas for real-time updates
-          saveStreamDeltas: true,
-          // Save the generated output to thread history
-          storageOptions: {
-            saveOutputMessages: true,
-            saveAnyInputMessages: true,
-          }
-        }
-      );
-    } else {
-      // Use simple prompt format when no attachments (like original code)
-      result = await thread.streamText(
-        { prompt: validatedPrompt },
-        { 
-          // Enable saving of stream deltas for real-time updates
-          saveStreamDeltas: true,
-          // Save the generated output to thread history
-          storageOptions: {
-            saveOutputMessages: true,
-            saveAnyInputMessages: true,
-          }
-        }
-      );
-    }
-    
-    // Consume the stream to process all deltas
-    await result.consumeStream();
-  },
-});
-
-export const streamResponse = internalAction({
-  args: { promptMessageId: v.string(), threadId: v.string(), modelId: v.optional(v.string()) },
-  handler: async (ctx, { promptMessageId, threadId, modelId = DEFAULT_CHAT_MODEL }) => {
-    // Validate inputs with Zod
-    const validatedMessageId = z.string().parse(promptMessageId);
-    const validatedThreadId = ThreadIdSchema.parse(threadId);
-    const validatedModelId = ModelId.parse(modelId);
-    
-    // Create an agent with the specified model
-    const agent = await createAgentWithModel(validatedModelId);
-    
-    const { thread } = await agent.continueThread(ctx, { threadId: validatedThreadId });
-    const result = await thread.streamText(
-      { promptMessageId: validatedMessageId },
-      { saveStreamDeltas: true },
-    );
-    await result.consumeStream();
+    await ctx.runAction(internal.chatStreaming.generateAIResponse, {
+      threadId: localThread.agentThreadId,
+      promptMessageId: "placeholder", // This is now handled differently
+      modelId,
+      attachmentIds,
+    });
   },
 });
 
 /**
  * Query & subscribe to messages & threads
  */
-
 export const listThreadMessages = query({
   args: {
     threadId: v.string(),
@@ -332,6 +266,7 @@ export const listThreadMessages = query({
     }
     
     // Use the agent to list messages from the agent thread
+    const defaultAgent = await getDefaultAgent();
     const paginated = await defaultAgent.listMessages(ctx, { 
       threadId: localThread.agentThreadId, 
       paginationOpts 
@@ -468,53 +403,6 @@ async function authorizeThreadAccess(
   }
 }
 
-export const sendMessageAndUpdateThread = mutation({
-  args: {
-    threadId: v.id("threads"),
-    prompt: v.string(),
-    isFirstMessage: v.boolean(),
-    modelId: v.optional(v.string()),
-    attachmentIds: v.optional(v.array(v.id("_storage"))),
-  },
-  handler: async (ctx, { threadId, prompt, isFirstMessage, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [] }) => {
-    // Validate inputs with Zod
-    const validatedPrompt = PromptSchema.parse(prompt);
-    const validatedModelId = ModelId.parse(modelId);
-    
-    await authorizeThreadAccess(ctx, threadId);
-    const userId = await getUserId(ctx);
-
-    // Schedule agent action
-    await ctx.scheduler.runAfter(
-      0,
-      internal.chatStreaming.createAgentThreadAndSaveMessage,
-      {
-        threadId,
-        prompt: validatedPrompt,
-        userId,
-        modelId: validatedModelId,
-        attachmentIds,
-      },
-    );
-
-    // Update thread metadata
-    if (isFirstMessage) {
-      const title =
-        validatedPrompt.length > 50 ? validatedPrompt.substring(0, 47) + "..." : validatedPrompt;
-      await ctx.db.patch(threadId, {
-        title,
-        updatedAt: Date.now(),
-      });
-    } else {
-      await ctx.db.patch(threadId, {
-        updatedAt: Date.now(),
-      });
-    }
-  },
-});
-
-// Simplified functions without circular dependencies
-
 /**
  * Get all available models with their configurations
  */
@@ -531,49 +419,7 @@ export const getAvailableModelsQuery = query({
 export const getAvailableAgentsQuery = query({
   args: {},
   handler: async (ctx) => {
-    // Return a simple static list instead of dynamic imports
     return getAvailableAgents();
-  },
-});
-
-/**
- * Send message with a specific model (simplified)
- */
-export const sendMessageWithModel = mutation({
-  args: {
-    threadId: v.id("threads"),
-    prompt: v.string(),
-    modelId: v.string(),
-    isFirstMessage: v.optional(v.boolean()),
-  },
-  handler: async (ctx, { threadId, prompt, modelId, isFirstMessage = false }) => {
-    // Validate inputs with Zod
-    const validatedPrompt = PromptSchema.parse(prompt);
-    const validatedModelId = ModelId.parse(modelId);
-    
-    await authorizeThreadAccess(ctx, threadId);
-    const userId = await getUserId(ctx);
-
-    // Use the specific model for message sending
-    await ctx.scheduler.runAfter(0, internal.chatStreaming.createAgentThreadAndSaveMessage, {
-      threadId,
-      prompt: validatedPrompt,
-      userId,
-      modelId: validatedModelId,
-    });
-
-    // Update thread metadata
-    if (isFirstMessage) {
-      const title = validatedPrompt.length > 50 ? validatedPrompt.substring(0, 47) + "..." : validatedPrompt;
-      await ctx.db.patch(threadId, {
-        title,
-        updatedAt: Date.now(),
-      });
-    } else {
-      await ctx.db.patch(threadId, {
-        updatedAt: Date.now(),
-      });
-    }
   },
 });
 
@@ -637,5 +483,114 @@ export const getThreadAttachments = query({
       attachments: msg.attachments || [],
       _creationTime: msg._creationTime,
     }));
+  },
+});
+
+// DEPRECATED functions kept for backward compatibility
+export const streamResponse = internalAction({
+  args: { promptMessageId: v.string(), threadId: v.string(), modelId: v.optional(v.string()) },
+  handler: async (ctx, { promptMessageId, threadId, modelId = DEFAULT_CHAT_MODEL }) => {
+    // Redirect to new implementation
+    await ctx.runAction(internal.chatStreaming.generateAIResponse, {
+      threadId,
+      promptMessageId,
+      modelId,
+      attachmentIds: [],
+    });
+  },
+});
+
+/**
+ * DEPRECATED - Use sendMessage instead
+ */
+export const sendMessageAndUpdateThread = mutation({
+  args: {
+    threadId: v.id("threads"),
+    prompt: v.string(),
+    isFirstMessage: v.boolean(),
+    modelId: v.optional(v.string()),
+    attachmentIds: v.optional(v.array(v.id("_storage"))),
+  },
+  handler: async (ctx, args): Promise<{ messageId: string }> => {
+    throw new Error("sendMessageAndUpdateThread is deprecated. Use sendMessage instead for optimistic updates.");
+  },
+});
+
+/**
+ * DEPRECATED - Use sendMessage instead
+ */
+export const sendMessageWithModel = mutation({
+  args: {
+    threadId: v.id("threads"),
+    prompt: v.string(),
+    modelId: v.string(),
+    isFirstMessage: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args): Promise<{ messageId: string }> => {
+    throw new Error("sendMessageWithModel is deprecated. Use sendMessage instead for optimistic updates.");
+  },
+});
+
+/**
+ * Get web search capabilities for all models
+ */
+export const getWebSearchCapabilities = query({
+  args: {},
+  handler: async (ctx) => {
+    const models = getAvailableModels();
+    
+    return models.map(model => ({
+      modelId: model.id,
+      modelName: model.name,
+      provider: model.provider,
+      supportsWebSearch: modelSupportsWebSearch(model.id),
+      webSearchConfig: modelSupportsWebSearch(model.id) 
+        ? getProviderWebSearchConfig(model.provider)
+        : null,
+    }));
+  },
+});
+
+/**
+ * Check if a specific model supports web search
+ */
+export const checkWebSearchSupport = query({
+  args: { modelId: v.string() },
+  handler: async (ctx, { modelId }) => {
+    const validatedModelId = ModelId.parse(modelId);
+    const modelConfig = getModelConfig(validatedModelId);
+    
+    return {
+      modelId: validatedModelId,
+      modelName: modelConfig.name,
+      provider: modelConfig.provider,
+      supportsWebSearch: modelSupportsWebSearch(validatedModelId),
+      webSearchConfig: modelSupportsWebSearch(validatedModelId) 
+        ? getProviderWebSearchConfig(modelConfig.provider)
+        : null,
+    };
+  },
+});
+
+/**
+ * Get available web search tools for all providers
+ */
+export const getAvailableWebSearchTools = query({
+  args: {},
+  handler: async (ctx) => {
+    const { getAllWebSearchTools } = await import("./tools");
+    return getAllWebSearchTools();
+  },
+});
+
+/**
+ * Get web search tools for a specific model
+ */
+export const getWebSearchToolsForModel = query({
+  args: { modelId: v.string() },
+  handler: async (ctx, { modelId }) => {
+    const validatedModelId = ModelId.parse(modelId);
+    const { getAvailableWebSearchToolsForModel } = await import("./tools");
+    return getAvailableWebSearchToolsForModel(validatedModelId);
   },
 });

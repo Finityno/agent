@@ -1,126 +1,146 @@
-# Convex Backend Architecture
+# Convex Chat Streaming Backend
 
-This document explains the cleaned up and organized structure of the Convex backend.
+This is the backend implementation for a real-time chat streaming application built with Convex, featuring support for multiple AI providers and comprehensive web search capabilities.
 
-## 🧹 Cleanup Summary
+## Features
 
-### What Was Removed
-- **Migration Code**: Removed `migrateThreadsWithUuids` function from `threads.ts` - no longer needed
-- **Duplicate Model Definitions**: Consolidated scattered model definitions from multiple files
-- **Hardcoded Values**: Removed hardcoded model IDs like `gpt-4o-mini` that didn't exist in config
-- **Provider Import Duplication**: Eliminated duplicate AI SDK imports across files
-- **Legacy Files**: Removed old `models.ts`, `agents.ts`, and `providers.ts` files
+- **Real-time chat streaming** with optimistic updates
+- **Multi-provider AI support** (OpenAI, Anthropic, Google)
+- **Comprehensive web search integration** for all providers
+- **File upload and attachment support**
+- **Thread management** with persistent chat history
+- **Model switching** during conversations
+- **Authentication and authorization**
 
-### Schema Changes
-- Made `uuid` field required in threads table (removed backward compatibility)
-- Cleaned up comments and optional fields that were no longer needed
+## Web Search Support
 
-## 📁 New Structure
+The backend includes comprehensive web search capabilities for all major AI providers, allowing AI models to access current, up-to-date information from the web.
 
-### `/config` - Centralized Configuration
-All configuration is now centralized in the `config/` folder:
+### Supported Providers and Pricing
 
-#### `config/models.ts`
-- **Single source of truth** for all model definitions
-- Centralized default model constants (`DEFAULT_CHAT_MODEL`, `DEFAULT_EMBEDDING_MODEL`)
-- Model validation schemas and utility functions
-- Supports: OpenAI, Anthropic, Google, Groq, Perplexity
+| Provider | Web Search Feature | Cost | Supported Models |
+|----------|-------------------|------|------------------|
+| **OpenAI** | Responses API with `webSearchPreview` | $10 per 1,000 searches | gpt-4o-mini, gpt-4o, gpt-4.1, gpt-4.1-nano |
+| **Anthropic** | Built-in web search via Messages API | $10 per 1,000 searches + token costs | claude-3-7-sonnet, claude-3-5-sonnet-v2, claude-3-5-haiku, claude-4-sonnet |
+| **Google** | Grounding with Google Search | $35 per 1,000 grounded queries | gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-pro |
 
-#### `config/providers.ts`
-- Centralized AI provider management
-- Factory functions for creating model instances
-- Handles provider-specific configurations and API keys
+### Usage Examples
 
-#### `config/agents.ts`
-- Agent configurations using centralized model definitions
-- Tool definitions and validation schemas
-- Agent recommendation logic
+#### Basic Web Search Usage
 
-### Core Files
-
-#### `chatStreaming.ts`
-- **Cleaned up**: Now uses centralized configurations
-- **Consistent**: All model references use the same default values
-- **No hardcoding**: Removed scattered model IDs and provider imports
-
-#### `threads.ts`
-- **Migration-free**: Removed legacy migration code
-- **Simplified**: Core thread management functions only
-
-#### `types.ts`
-- **Re-exports**: Now just re-exports types from config files
-- **No duplication**: Eliminated redundant type definitions
-
-#### `tools.ts`
-- **Updated**: Uses centralized ToolId enum from config
-- **Consistent**: Tool validation aligned with config structure
-
-## 🎯 Benefits
-
-### 1. **Single Source of Truth**
-- All model definitions in one place (`config/models.ts`)
-- Easy to add/remove models
-- Consistent model IDs across the entire application
-
-### 2. **No More Duplication**
-- Model IDs defined once, used everywhere
-- Provider imports centralized
-- Agent configurations use shared definitions
-
-### 3. **Easy Maintenance**
-- Want to change default model? Update one constant
-- Want to add a new provider? Add it to providers config
-- Clear separation of concerns
-
-### 4. **Type Safety**
-- Zod validation throughout
-- TypeScript enums prevent typos
-- Compile-time checks for model/agent configurations
-
-## 🔧 Usage Examples
-
-### Adding a New Model
 ```typescript
-// In config/models.ts
-export const ModelId = z.enum([
-  // ... existing models
-  "new-model-id"
-]);
-
-export const modelConfigs: Record<ModelId, ModelConfig> = {
-  // ... existing configs
-  "new-model-id": {
-    id: "new-model-id",
-    name: "New Model",
-    provider: "openai",
-    // ... other config
-  }
-};
+// Send a message with web search enabled
+const result = await ctx.runMutation(api.chatStreaming.sendMessage, {
+  threadId: "thread_123",
+  prompt: "What are the latest developments in AI in 2024?",
+  modelId: "gpt-4.1-nano",
+  enableWebSearch: true, // Enable web search
+});
 ```
 
-### Using Models in Functions
+#### Check Web Search Support
+
 ```typescript
-import { DEFAULT_CHAT_MODEL, ModelId } from "./config/models";
-import { createModelInstance } from "./config/providers";
+// Check if a model supports web search
+const support = await ctx.runQuery(api.chatStreaming.checkWebSearchSupport, {
+  modelId: "claude-4-sonnet-20250514"
+});
 
-// Use default model
-const model = createModelInstance(DEFAULT_CHAT_MODEL);
-
-// Use specific model with validation
-const specificModel = createModelInstance(ModelId.parse("gpt-4.1"));
+console.log(support);
+// {
+//   modelId: "claude-4-sonnet-20250514",
+//   modelName: "Claude 4 Sonnet",
+//   provider: "anthropic",
+//   supportsWebSearch: true,
+//   webSearchConfig: { ... }
+// }
 ```
 
-### Changing Default Model
+#### Get Available Web Search Tools
+
 ```typescript
-// In config/models.ts - ONE place to change it
-export const DEFAULT_CHAT_MODEL: ModelId = "claude-4-sonnet-20250514";
+// Get all available web search tools
+const tools = await ctx.runQuery(api.chatStreaming.getAvailableWebSearchTools, {});
+
+// Get web search tools for a specific model
+const modelTools = await ctx.runQuery(api.chatStreaming.getWebSearchToolsForModel, {
+  modelId: "gemini-2.5-flash-preview-05-20"
+});
 ```
 
-## 🚀 Next Steps
+### API Reference
 
-1. **Add new models** easily by updating the config files
-2. **Extend agent capabilities** by modifying agent configurations
-3. **Add new providers** by extending the provider factory
-4. **Monitor usage** with centralized model tracking
+#### New Queries
 
-The backend is now much cleaner, more maintainable, and follows the DRY principle throughout. 
+- `getWebSearchCapabilities` - Get web search support for all models
+- `checkWebSearchSupport` - Check if specific model supports web search  
+- `getAvailableWebSearchTools` - Get all web search tools
+- `getWebSearchToolsForModel` - Get tools for specific model
+
+#### Enhanced Mutations
+
+- `sendMessage` - Now supports `enableWebSearch` parameter
+
+### Best Practices
+
+#### When to Use Web Search
+
+✅ **Good use cases:**
+- Questions about recent events or current information
+- Requests for up-to-date data (stock prices, news, etc.)
+- Fact-checking and verification needs
+- Research-heavy queries
+
+❌ **Avoid for:**
+- Simple conversational responses
+- Creative writing tasks
+- Mathematical calculations
+- Code generation (unless requiring latest API docs)
+
+#### Cost Optimization
+
+1. **Use appropriate models**: Choose cost-effective models for web search
+2. **Enable selectively**: Only enable web search when needed
+3. **Set reasonable limits**: Configure `maxUses` to control costs
+4. **Monitor usage**: Track web search usage across models
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Provider API Keys
+OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_anthropic_key
+GOOGLE_AI_API_KEY=your_google_key
+
+# Optional: Custom providers
+GROQ_API_KEY=your_groq_key
+PERPLEXITY_API_KEY=your_perplexity_key
+
+# Convex
+CONVEX_DEPLOYMENT=your_convex_deployment
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Web search not working**
+   - Check if model supports web search
+   - Verify API keys are configured
+   - Ensure `enableWebSearch` is set to `true`
+
+2. **High costs**
+   - Monitor web search usage
+   - Use cost-effective models
+   - Set appropriate rate limits
+
+3. **Rate limiting**
+   - Implement exponential backoff
+   - Use provider-specific rate limits
+   - Consider request queuing
+
+## License
+
+This project is licensed under the MIT License. 
