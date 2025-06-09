@@ -3,7 +3,7 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ArrowUp, Paperclip, Square, X, StopCircle, Mic, Globe, BrainCog, FolderCode } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import {
   Select,
@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
 
 // Utility function for className merging
 const cn = (...classes: (string | undefined | null | false)[]) => classes.filter(Boolean).join(" ");
@@ -663,7 +664,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
   const handleCanvasToggle = React.useCallback(() => setShowCanvas((prev) => !prev), []);
 
   // Memoize submit handler
-  const handleSubmit = React.useCallback(() => {
+  const handleSubmit = React.useCallback(async () => {
     if (input.trim() || attachments.length > 0) {
       let messagePrefix = "";
       if (showSearch) messagePrefix = "[Search: ";
@@ -711,11 +712,12 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
 
   // Memoize placeholder text
   const placeholderText = React.useMemo(() => {
+    if (selectedModel === "gpt-image-1") return "Describe the image you want to generate";
     if (showSearch) return "Search the web...";
     if (showThink) return "Think deeply...";
     if (showCanvas) return "Create on canvas...";
     return placeholder;
-  }, [showSearch, showThink, showCanvas, placeholder]);
+  }, [selectedModel, showSearch, showThink, showCanvas, placeholder]);
 
   // Inject styles once when component mounts
   React.useEffect(() => {
@@ -733,6 +735,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
 
   return (
     <>
+
       <PromptInput
         value={input}
         onValueChange={setInput}
@@ -846,7 +849,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
               </button>
             </PromptInputAction>
 
-            <div className="relative">
+            <div className="relative flex items-center gap-2">
               <Select value={selectedModel} onValueChange={setSelectedModel}>
                 <SelectTrigger className="w-36 h-8 bg-transparent border border-gray-300 dark:border-gray-700/50 text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:border-gray-400 dark:hover:border-gray-600 transition-colors rounded-md">
                   <SelectValue placeholder="Model" />
@@ -861,6 +864,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
                       <span className="font-medium">{model.name}</span>
                     </SelectItem>
                   ))}
+                  <SelectItem value="gpt-image-1">GPT ImageGen</SelectItem>
                 </SelectContent>
               </Select>
             </div>

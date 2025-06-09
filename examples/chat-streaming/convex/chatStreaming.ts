@@ -27,6 +27,9 @@ import {
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { v4 as uuidv4 } from "uuid";
+import { providers } from "./config/providers";
+import { experimental_generateImage as generateImage } from 'ai';
+import { openai } from '@ai-sdk/openai';
 
 // Zod schemas for validation
 const ThreadIdSchema = z.string();
@@ -128,14 +131,24 @@ export const sendMessage = mutation({
       });
     }
 
-    // Schedule the AI response generation in the background
-    await ctx.scheduler.runAfter(0, internal.chatStreaming.generateAIResponse, {
-      threadId: agentThreadId,
-      promptMessageId: messageId,
-      modelId: validatedModelId,
-      attachmentIds,
-      enableWebSearch,
-    });
+    // Handle image generation specially
+    if (validatedModelId === "gpt-image-1") {
+      // Schedule image generation instead of AI response
+      await ctx.scheduler.runAfter(0, internal.chatStreaming.generateImageResponse, {
+        threadId: agentThreadId,
+        promptMessageId: messageId,
+        prompt: validatedPrompt,
+      });
+    } else {
+      // Schedule the AI response generation in the background
+      await ctx.scheduler.runAfter(0, internal.chatStreaming.generateAIResponse, {
+        threadId: agentThreadId,
+        promptMessageId: messageId,
+        modelId: validatedModelId,
+        attachmentIds,
+        enableWebSearch,
+      });
+    }
 
     // Update thread timestamp
     await ctx.db.patch(threadId, {
@@ -592,5 +605,187 @@ export const getWebSearchToolsForModel = query({
     const validatedModelId = ModelId.parse(modelId);
     const { getAvailableWebSearchToolsForModel } = await import("./tools");
     return getAvailableWebSearchToolsForModel(validatedModelId);
+  },
+});
+
+/**
+ * Generate an image response for chat messages
+ */
+export const generateImageResponse = internalAction({
+  args: {
+    threadId: v.string(),
+    promptMessageId: v.string(),
+    prompt: v.string(),
+  },
+  handler: async (ctx, { threadId, promptMessageId, prompt }) => {
+    const { agent } = await createAgentWithModel("gpt-4.1-nano", false);
+    
+    try {
+      // Generate the image first
+      const result = await generateImage({
+        model: openai.image('gpt-image-1'),
+        prompt,
+        size: "1024x1024",
+      });
+      
+      console.log('Image generation result structure:', JSON.stringify(result, null, 2));
+      
+      // Cast to any to inspect the actual structure at runtime
+      const resultAny = result as any;
+      let url: string | undefined;
+      
+      if (resultAny.images && resultAny.images.length > 0) {
+        const image = resultAny.images[0];
+        console.log('First image object:', JSON.stringify(image, null, 2));
+        console.log('First image properties:', Object.keys(image));
+        
+        // Use the correct property name from the logs
+        if (image.base64Data) {
+          url = `data:image/png;base64,${image.base64Data}`;
+        } else if (image.base64) {
+          url = `data:image/png;base64,${image.base64}`;
+        } else if (image.url) {
+          url = image.url;
+        } else if (typeof image === 'string') {
+          url = image;
+        }
+      }
+      
+      if (!url) {
+        console.error('No image URL found in result. Available properties:', Object.keys(resultAny));
+        console.error('First image properties:', resultAny.images?.[0] ? Object.keys(resultAny.images[0]) : 'No images');
+        throw new Error('No image URL or base64 returned');
+      }
+      
+      // Store the image in Convex storage
+      const base64Data = url.split(',')[1]; // Remove the data:image/png;base64, prefix
+      // Convert base64 to Uint8Array (Buffer alternative)
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: 'image/png' });
+      
+      const storageId = await ctx.storage.store(blob);
+      
+      // Get the storage URL for the image
+      const storageUrl = await ctx.storage.getUrl(storageId);
+      
+      if (!storageUrl) {
+        throw new Error('Failed to get storage URL for generated image');
+      }
+      
+      // Continue the thread to generate assistant response
+      const { thread } = await agent.continueThread(ctx, { threadId });
+      
+      // Use thread.streamText to create proper assistant message with markdown support
+      const streamResult = await thread.streamText(
+        { prompt: `![Generated Image](${storageUrl})` },
+        { 
+          saveStreamDeltas: true,
+          storageOptions: {
+            saveOutputMessages: true,
+            saveAnyInputMessages: false, // User message already saved
+          },
+        }
+      );
+      
+      // Consume the stream to process all deltas
+      await streamResult.consumeStream();
+      
+    } catch (error) {
+      console.error('Error generating image:', error);
+      
+      // Continue the thread to generate error response as assistant message
+      const { thread: errorThread } = await agent.continueThread(ctx, { threadId });
+      
+      // Use thread.streamText for error message too
+      const errorResult = await errorThread.streamText(
+        { prompt: `I'm sorry, I encountered an error while generating the image: ${error instanceof Error ? error.message : String(error)}` },
+        { 
+          saveStreamDeltas: true,
+          storageOptions: {
+            saveOutputMessages: true,
+            saveAnyInputMessages: false,
+          },
+        }
+      );
+      
+      await errorResult.consumeStream();
+    }
+  },
+});
+
+/**
+ * Generate an image using DALL-E 3
+ */
+export const generateImageAction = action({
+  args: {
+    prompt: v.string(),
+    size: v.optional(v.union(v.literal("1024x1024"), v.literal("1536x1024"), v.literal("1024x1536"))),
+    quality: v.optional(v.union(v.literal("standard"), v.literal("high"))),
+  },
+  handler: async (
+    ctx,
+    { prompt, size = "1024x1024", quality }
+  ): Promise<{ url: string; storageId: string; prompt: string; size: string; quality?: string }> => {
+    try {
+      const result = await generateImage({
+        model: openai.image('gpt-image-1'),
+        prompt,
+        size,
+        providerOptions: quality ? { openai: { quality } } : undefined,
+      });
+      
+      console.log('Image generation result structure:', JSON.stringify(result, null, 2));
+      
+             // Cast to any to inspect the actual structure at runtime
+       const resultAny = result as any;
+       let url: string | undefined;
+       
+       if (resultAny.images && resultAny.images.length > 0) {
+         const image = resultAny.images[0];
+         console.log('First image object:', JSON.stringify(image, null, 2));
+         console.log('First image properties:', Object.keys(image));
+         
+         // Use the correct property name from the logs
+         if (image.base64Data) {
+           url = `data:image/png;base64,${image.base64Data}`;
+         } else if (image.base64) {
+           url = `data:image/png;base64,${image.base64}`;
+         } else if (image.url) {
+           url = image.url;
+         } else if (typeof image === 'string') {
+           url = image;
+         }
+       }
+      
+             if (!url) {
+         console.error('No image URL found in result. Available properties:', Object.keys(resultAny));
+         console.error('First image properties:', resultAny.images?.[0] ? Object.keys(resultAny.images[0]) : 'No images');
+         throw new Error('No image URL or base64 returned');
+       }
+       
+       // Store the image in Convex storage
+       const base64Data = url.split(',')[1]; // Remove the data:image/png;base64, prefix
+       // Convert base64 to Uint8Array (Buffer alternative)
+       const binaryString = atob(base64Data);
+       const bytes = new Uint8Array(binaryString.length);
+       for (let i = 0; i < binaryString.length; i++) {
+         bytes[i] = binaryString.charCodeAt(i);
+       }
+       const blob = new Blob([bytes], { type: 'image/png' });
+       
+       const storageId = await ctx.storage.store(blob);
+       
+       return { url, storageId, prompt, size, quality };
+    } catch (error) {
+      console.error('Error generating image:', error);
+      if (error instanceof Error) {
+        throw new Error(`Failed to generate image: ${error.message}`);
+      }
+      throw error;
+    }
   },
 });

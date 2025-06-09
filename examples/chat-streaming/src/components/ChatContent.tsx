@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/message"
 import { PromptInputBox } from "./ai-prompt-box"
 import { MessageAttachment } from "./MessageAttachment"
+import ImageGeneration from "./ai-imagegenerator"
 import { ScrollButton } from "./ui/scroll-button"
 import { Button } from "./ui/button"
 import { SidebarTrigger } from "./ui/sidebar"
@@ -352,6 +353,23 @@ function ChatContent({
 
   // Determine if we're currently streaming
   const isStreaming = messages.isLoading && uiMessages.length > 0;
+  
+  // Check if we're currently generating an image
+  const isGeneratingImage = useMemo(() => {
+    if (!isStreaming || uiMessages.length === 0) return false;
+    
+    // Look for the last user message to see if it was an image generation request
+    const lastUserMessage = [...uiMessages].reverse().find(msg => msg.role === "user");
+    if (!lastUserMessage) return false;
+    
+    // Check if there's a corresponding assistant message yet
+    const messagesAfterUser = uiMessages.slice(uiMessages.indexOf(lastUserMessage) + 1);
+    const hasAssistantResponse = messagesAfterUser.some(msg => msg.role !== "user");
+    
+    // We're generating an image if the last user message doesn't have an assistant response yet
+    // and we're currently streaming (which indicates processing)
+    return !hasAssistantResponse && isStreaming;
+  }, [uiMessages, isStreaming]);
 
   // Use cached threads if available, otherwise query (fallback for backward compatibility)
   const shouldQueryThreads = isAuthenticated && !isLoading && !cachedThreads;
@@ -413,6 +431,19 @@ function ChatContent({
                 threadAttachments={threadAttachments}
               />
             ))}
+            
+            {/* Show image generation loading when generating */}
+            {isGeneratingImage && (
+              <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-6 items-start">
+                <div className="group flex w-full flex-col gap-2">
+                  <ImageGeneration>
+                    <div className="w-full aspect-square flex items-center justify-center min-h-[256px] bg-gray-100 dark:bg-gray-800">
+                      <span className="text-gray-500 dark:text-gray-400">Generating image...</span>
+                    </div>
+                  </ImageGeneration>
+                </div>
+              </div>
+            )}
           </ChatContainerContent>
           <div className="absolute bottom-4 left-1/2 flex w-full max-w-2xl -translate-x-1/2 justify-end px-5">
             <ScrollButton className="shadow-sm" />

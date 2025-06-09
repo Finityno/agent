@@ -11,7 +11,8 @@ export const ModelId = z.enum([
   "gpt-4.1-nano", 
   "claude-4-sonnet-20250514",
   "gemini-2.5-pro-preview-06-05",
-  "gemini-2.5-flash-preview-05-20"
+  "gemini-2.5-flash-preview-05-20",
+  "gpt-image-1"
 ]);
 export type ModelId = z.infer<typeof ModelId>;
 
@@ -127,6 +128,23 @@ export const modelConfigs: Record<ModelId, ModelConfig> = {
       streaming: true,
       functionCalling: true,
       vision: true,
+      reasoning: false,
+    },
+    category: "fast",
+  },
+  "gpt-image-1": {
+    id: "gpt-image-1",
+    name: "GPT ImageGen",
+    provider: "openai",
+    description: "Image generation model using DALL-E 3",
+    contextWindow: 4000,
+    maxTokens: 1000,
+    pricing: { input: 0, output: 0 }, // Image generation pricing is different
+    capabilities: {
+      chat: false,
+      streaming: false,
+      functionCalling: false,
+      vision: false,
       reasoning: false,
     },
     category: "fast",
