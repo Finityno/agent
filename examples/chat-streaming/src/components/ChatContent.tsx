@@ -237,7 +237,7 @@ function ChatContent({
   }, [])
 
   // Memoize submit handler
-  const handleSubmit = useCallback(async (prompt: string) => {
+  const handleSubmit = useCallback(async (prompt: string, files?: File[], modelId?: string) => {
     if (!prompt.trim()) return;
 
     let threadId = activeThreadId;
@@ -255,6 +255,7 @@ function ChatContent({
       prompt: prompt.trim(),
       threadId,
       isFirstMessage,
+      modelId: modelId || "gpt-4.1-nano", // Default model if not specified
     });
   }, [activeThreadId, createThread, setActiveThreadId, messages?.results, sendMessageAndUpdateThread]);
 

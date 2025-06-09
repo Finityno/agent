@@ -2,7 +2,7 @@ import { z } from "zod";
 import { paginationOptsValidator } from "convex/server";
 import { Agent, vStreamArgs } from "@convex-dev/agent";
 import { components, internal } from "./_generated/api";
-import { getAvailableModels } from "./models";
+import { getAvailableModels, modelConfigs } from "./models";
 import {
   action,
   ActionCtx,
@@ -18,27 +18,51 @@ import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { v4 as uuidv4 } from "uuid";
 import { openai } from "@ai-sdk/openai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { google } from "@ai-sdk/google";
 
 // Zod schemas for validation
 const ThreadIdSchema = z.string();
 const PromptSchema = z.string().min(1, "Prompt cannot be empty");
 const ModelIdSchema = z.string();
 
-// Simple agent creation without circular dependencies
-async function createSimpleAgent() {
-  const { openai } = await import("@ai-sdk/openai");
+// Function to create agent with specific model
+async function createAgentWithModel(modelId: string) {
+  const modelConfig = modelConfigs[modelId];
+  if (!modelConfig) {
+    throw new Error(`Model ${modelId} not found`);
+  }
+
+  let chatModel;
+  switch (modelConfig.provider) {
+    case "openai":
+      chatModel = openai(modelId);
+      break;
+    case "anthropic":
+      const { anthropic } = await import("@ai-sdk/anthropic");
+      chatModel = anthropic(modelId);
+      break;
+    case "google":
+      const { google } = await import("@ai-sdk/google");
+      chatModel = google(modelId);
+      break;
+    default:
+      // Fallback to OpenAI
+      chatModel = openai("gpt-4.1-nano");
+  }
+
   return new Agent(components.agent, {
-    name: "Simple Chat Agent",
-    chat: openai("gpt-4o-mini"),
+    name: `${modelConfig.name} Agent`,
+    chat: chatModel,
     textEmbedding: openai.textEmbedding("text-embedding-3-small"),
     instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
   });
-  }
+}
 
-// Create a global agent instance for queries (since queries can't use dynamic imports)
+// Create a default agent instance for queries (since queries can't use dynamic imports)
 const defaultAgent = new Agent(components.agent, {
-  name: "Simple Chat Agent",
-  chat: openai("gpt-4o-mini"),
+  name: "Default Chat Agent",
+  chat: openai("gpt-4.1-nano"),
   textEmbedding: openai.textEmbedding("text-embedding-3-small"),
   instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
 });
@@ -46,11 +70,12 @@ const defaultAgent = new Agent(components.agent, {
 // Streaming, where generate the prompt message first, then asynchronously
 // generate the stream response.
 export const streamStoryAsynchronously = mutation({
-  args: { prompt: v.string(), threadId: v.string() },
-  handler: async (ctx, { prompt, threadId }) => {
+  args: { prompt: v.string(), threadId: v.string(), modelId: v.optional(v.string()) },
+  handler: async (ctx, { prompt, threadId, modelId = "gpt-4.1-nano" }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
     const validatedThreadId = ThreadIdSchema.parse(threadId);
+    const validatedModelId = ModelIdSchema.parse(modelId);
     
     await authorizeThreadAccess(ctx, validatedThreadId as Id<"threads">);
     
@@ -63,15 +88,17 @@ export const streamStoryAsynchronously = mutation({
       threadId: validatedThreadId,
       prompt: validatedPrompt,
       userId, // Pass the userId to the internal action
+      modelId: validatedModelId,
     });
   },
 });
 
 export const sendMessage = mutation({
-  args: { threadId: v.id("threads"), prompt: v.string() },
-  handler: async (ctx, { threadId, prompt }) => {
+  args: { threadId: v.id("threads"), prompt: v.string(), modelId: v.optional(v.string()) },
+  handler: async (ctx, { threadId, prompt, modelId = "gpt-4.1-nano" }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
+    const validatedModelId = ModelIdSchema.parse(modelId);
     
     await authorizeThreadAccess(ctx, threadId);
 
@@ -84,17 +111,19 @@ export const sendMessage = mutation({
       threadId,
       prompt: validatedPrompt,
       userId,
+      modelId: validatedModelId,
     });
   },
 });
 
 export const createAgentThreadAndSaveMessage = internalAction({
-  args: { prompt: v.string(), threadId: v.string(), userId: v.string() },
-  handler: async (ctx, { prompt, threadId, userId }) => {
+  args: { prompt: v.string(), threadId: v.string(), userId: v.string(), modelId: v.optional(v.string()) },
+  handler: async (ctx, { prompt, threadId, userId, modelId = "gpt-4.1-nano" }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
     const validatedThreadId = ThreadIdSchema.parse(threadId);
     const validatedUserId = z.string().parse(userId);
+    const validatedModelId = ModelIdSchema.parse(modelId);
     
     // Get the local thread
     const localThread = await ctx.runQuery(internal.chatStreaming.getLocalThread, { threadId: validatedThreadId });
@@ -104,12 +133,12 @@ export const createAgentThreadAndSaveMessage = internalAction({
     
     let agentThreadId = localThread.agentThreadId;
     
-    // Create a simple agent (no circular dependencies)
-    const defaultAgent = await createSimpleAgent();
+    // Create an agent with the specified model
+    const agent = await createAgentWithModel(validatedModelId);
     
     // Create agent thread if it doesn't exist
     if (!agentThreadId) {
-      const { threadId: newAgentThreadId } = await defaultAgent.createThread(ctx, { userId: validatedUserId });
+      const { threadId: newAgentThreadId } = await agent.createThread(ctx, { userId: validatedUserId });
       agentThreadId = newAgentThreadId;
       
       // Update the local thread with the agent thread ID
@@ -120,7 +149,7 @@ export const createAgentThreadAndSaveMessage = internalAction({
     }
     
     // Continue with the existing thread and generate streaming text with deltas
-    const { thread } = await defaultAgent.continueThread(ctx, { threadId: agentThreadId });
+    const { thread } = await agent.continueThread(ctx, { threadId: agentThreadId });
     
     // Use streamText instead of generateText to enable real-time streaming with deltas
     const result = await thread.streamText(
@@ -142,16 +171,17 @@ export const createAgentThreadAndSaveMessage = internalAction({
 });
 
 export const streamResponse = internalAction({
-  args: { promptMessageId: v.string(), threadId: v.string() },
-  handler: async (ctx, { promptMessageId, threadId }) => {
+  args: { promptMessageId: v.string(), threadId: v.string(), modelId: v.optional(v.string()) },
+  handler: async (ctx, { promptMessageId, threadId, modelId = "gpt-4.1-nano" }) => {
     // Validate inputs with Zod
     const validatedMessageId = z.string().parse(promptMessageId);
     const validatedThreadId = ThreadIdSchema.parse(threadId);
+    const validatedModelId = ModelIdSchema.parse(modelId);
     
-    // Create a simple agent (no circular dependencies)
-    const defaultAgent = await createSimpleAgent();
+    // Create an agent with the specified model
+    const agent = await createAgentWithModel(validatedModelId);
     
-    const { thread } = await defaultAgent.continueThread(ctx, { threadId: validatedThreadId });
+    const { thread } = await agent.continueThread(ctx, { threadId: validatedThreadId });
     const result = await thread.streamText(
       { promptMessageId: validatedMessageId },
       { saveStreamDeltas: true },
@@ -333,10 +363,12 @@ export const sendMessageAndUpdateThread = mutation({
     threadId: v.id("threads"),
     prompt: v.string(),
     isFirstMessage: v.boolean(),
+    modelId: v.optional(v.string()),
   },
-  handler: async (ctx, { threadId, prompt, isFirstMessage }) => {
+  handler: async (ctx, { threadId, prompt, isFirstMessage, modelId = "gpt-4.1-nano" }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
+    const validatedModelId = ModelIdSchema.parse(modelId);
     
     await authorizeThreadAccess(ctx, threadId);
     const userId = await getUserId(ctx);
@@ -349,6 +381,7 @@ export const sendMessageAndUpdateThread = mutation({
         threadId,
         prompt: validatedPrompt,
         userId,
+        modelId: validatedModelId,
       },
     );
 
@@ -438,11 +471,12 @@ export const sendMessageWithModel = mutation({
     await authorizeThreadAccess(ctx, threadId);
     const userId = await getUserId(ctx);
 
-    // For now, just use the regular message sending (simplified)
+    // Use the specific model for message sending
     await ctx.scheduler.runAfter(0, internal.chatStreaming.createAgentThreadAndSaveMessage, {
       threadId,
       prompt: validatedPrompt,
       userId,
+      modelId: validatedModelId,
     });
 
     // Update thread metadata

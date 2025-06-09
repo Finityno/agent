@@ -6,7 +6,7 @@ const AgentConfigSchema = z.object({
   name: z.string(),
   description: z.string(),
   instructions: z.string(),
-  chatModel: z.enum(["gpt-4o-mini", "gpt-4o"]),
+  chatModel: z.enum(["gpt-4.1", "gpt-4.1-nano", "claude-4-sonnet-20250514", "gemini-2.5-pro-preview-06-05", "gemini-2.5-flash-preview-05-20"]),
   embeddingModel: z.enum(["text-embedding-3-small", "text-embedding-3-large"]),
   tools: z.array(z.enum(["webSearch", "codeAnalysis", "dataVisualization", "documentSummary", "taskPlanning", "sentimentAnalysis"])),
   capabilities: z.object({
@@ -38,7 +38,7 @@ export const agentConfigs: Record<string, AgentConfig> = {
     name: "Chat Assistant",
     description: "General purpose conversational AI assistant",
     instructions: "You are a helpful, friendly, and knowledgeable AI assistant. Provide clear, accurate, and helpful responses to user questions. Be conversational but professional.",
-    chatModel: "gpt-4o-mini",
+    chatModel: "gpt-4.1-nano",
     embeddingModel: "text-embedding-3-small",
     tools: ["sentimentAnalysis", "documentSummary"],
     capabilities: {
@@ -68,7 +68,7 @@ export const agentConfigs: Record<string, AgentConfig> = {
     name: "Quick Assistant",
     description: "Optimized for fast responses and quick interactions",
     instructions: "You are a quick and efficient assistant. Provide concise, helpful responses. Focus on being fast and accurate while maintaining helpfulness.",
-    chatModel: "gpt-4o-mini",
+    chatModel: "gpt-4.1-nano",
     embeddingModel: "text-embedding-3-small",
     tools: [],
     capabilities: {

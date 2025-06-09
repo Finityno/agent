@@ -3,6 +3,8 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ArrowUp, Paperclip, Square, X, StopCircle, Mic, Globe, BrainCog, FolderCode } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import {
   Select,
   SelectContent,
@@ -468,7 +470,7 @@ CustomDivider.displayName = "CustomDivider";
 
 // Main PromptInputBox Component
 interface PromptInputBoxProps {
-  onSend?: (message: string, files?: File[]) => void;
+  onSend?: (message: string, files?: File[], modelId?: string) => void;
   onCancel?: () => void;
   isLoading?: boolean;
   placeholder?: string;
@@ -492,19 +494,13 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
   const [showSearch, setShowSearch] = React.useState(false);
   const [showThink, setShowThink] = React.useState(false);
   const [showCanvas, setShowCanvas] = React.useState(false);
-  const [selectedModel, setSelectedModel] = React.useState("gpt-4.1");
+  const [selectedModel, setSelectedModel] = React.useState("gpt-4.1-nano");
   
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const promptBoxRef = React.useRef<HTMLDivElement>(null);
 
-  // Memoize available models to prevent re-renders
-  const availableModels = React.useMemo(() => [
-    { id: "gpt-4.1", name: "GPT-4.1", description: "Latest and most advanced GPT model", provider: "openai", category: "powerful" },
-    { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", description: "Ultra-fast and efficient latest model", provider: "openai", category: "fast" },
-    { id: "claude-4-sonnet-20250514", name: "Claude 4 Sonnet", description: "Latest and most capable Claude model", provider: "anthropic", category: "powerful" },
-    { id: "gemini-2.5-pro-preview-06-05", name: "Gemini 2.5 Pro", description: "Latest and most advanced Gemini model", provider: "google", category: "powerful" },
-    { id: "gemini-2.5-flash-preview-05-20", name: "Gemini 2.5 Flash", description: "Ultra-fast latest Gemini model", provider: "google", category: "fast" },
-  ], []);
+  // Use the backend model configurations
+  const availableModels = useQuery(api.chatStreaming.getAvailableModelsQuery) || [];
 
   // Memoize file type check
   const isImageFile = React.useCallback((file: File) => file.type.startsWith("image/"), []);
@@ -596,7 +592,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
       else if (showThink) messagePrefix = "[Think: ";
       else if (showCanvas) messagePrefix = "[Canvas: ";
       const formattedInput = messagePrefix ? `${messagePrefix}${input}]` : input;
-      onSend(formattedInput, files);
+      onSend(formattedInput, files, selectedModel);
       setInput("");
       setFiles([]);
       setFilePreviews({});
@@ -608,10 +604,10 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
     // Started recording
   }, []);
 
-  const handleStopRecording = React.useCallback((duration: number) => {
-    setIsRecording(false);
-    onSend(`[Voice message - ${duration} seconds]`, []);
-  }, [onSend]);
+      const handleStopRecording = React.useCallback((duration: number) => {
+      setIsRecording(false);
+      onSend(`[Voice message - ${duration} seconds]`, [], selectedModel);
+    }, [onSend, selectedModel]);
 
   // Memoize content state
   const hasContent = React.useMemo(() => input.trim() !== "" || files.length > 0, [input, files.length]);
@@ -749,20 +745,17 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
 
             <div className="relative">
               <Select value={selectedModel} onValueChange={setSelectedModel}>
-                <SelectTrigger className="w-40 h-8 bg-transparent border-transparent text-[#9CA3AF] hover:text-[#D1D5DB] hover:bg-gray-600/30 transition-colors text-sm">
-                  <SelectValue placeholder="Select model" />
+                <SelectTrigger className="w-36 h-8 bg-transparent border border-gray-700/50 text-sm text-gray-300 hover:text-white hover:border-gray-600 transition-colors rounded-md">
+                  <SelectValue placeholder="Model" />
                 </SelectTrigger>
-                <SelectContent className="bg-[#1F2023] border-[#444444]">
-                  {availableModels.map((model) => (
+                <SelectContent className="min-w-[200px]">
+                  {availableModels.map((model: any) => (
                     <SelectItem 
                       key={model.id} 
                       value={model.id}
-                      className="text-white hover:bg-[#2A2A2A] focus:bg-[#2A2A2A]"
+                      className="cursor-pointer"
                     >
-                      <div className="flex flex-col">
-                        <span className="font-medium">{model.name}</span>
-                        <span className="text-xs text-gray-400">{model.description}</span>
-                      </div>
+                      <span className="font-medium">{model.name}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -42,16 +42,33 @@ function validateEnvVar(name: string, value: string | undefined): string {
   return value;
 }
 
-// Simplified model configurations (using only OpenAI models to avoid complexity)
+// Model configurations matching the user's specified model IDs
 export const modelConfigs: Record<string, ModelConfig> = {
   // OpenAI Models
-  "gpt-4o-mini": {
-    id: "gpt-4o-mini",
-    name: "GPT-4o Mini",
+  "gpt-4.1": {
+    id: "gpt-4.1",
+    name: "GPT-4.1",
     provider: "openai",
-    description: "Fast and efficient GPT model",
+    description: "Latest and most advanced GPT model",
     contextWindow: 128000,
     maxTokens: 16384,
+    pricing: { input: 2.5, output: 10 },
+    capabilities: {
+      chat: true,
+      streaming: true,
+      functionCalling: true,
+      vision: true,
+      reasoning: false,
+    },
+    category: "powerful",
+  },
+  "gpt-4.1-nano": {
+    id: "gpt-4.1-nano",
+    name: "GPT-4.1 Nano",
+    provider: "openai",
+    description: "Ultra-fast and efficient latest model",
+    contextWindow: 128000,
+    maxTokens: 4096,
     pricing: { input: 0.15, output: 0.6 },
     capabilities: {
       chat: true,
@@ -62,14 +79,50 @@ export const modelConfigs: Record<string, ModelConfig> = {
     },
     category: "fast",
   },
-  "gpt-4o": {
-    id: "gpt-4o",
-    name: "GPT-4o",
-    provider: "openai",
-    description: "Advanced GPT model with vision capabilities",
-    contextWindow: 128000,
-    maxTokens: 4096,
-    pricing: { input: 2.5, output: 10 },
+  // Anthropic Models
+  "claude-4-sonnet-20250514": {
+    id: "claude-4-sonnet-20250514",
+    name: "Claude 4 Sonnet",
+    provider: "anthropic",
+    description: "Latest and most capable Claude model",
+    contextWindow: 200000,
+    maxTokens: 8192,
+    pricing: { input: 3.0, output: 15.0 },
+    capabilities: {
+      chat: true,
+      streaming: true,
+      functionCalling: true,
+      vision: true,
+      reasoning: true,
+    },
+    category: "powerful",
+  },
+  // Google Models  
+  "gemini-2.5-pro-preview-06-05": {
+    id: "gemini-2.5-pro-preview-06-05",
+    name: "Gemini 2.5 Pro",
+    provider: "google",
+    description: "Latest and most advanced Gemini model",
+    contextWindow: 1000000,
+    maxTokens: 8192,
+    pricing: { input: 1.25, output: 5.0 },
+    capabilities: {
+      chat: true,
+      streaming: true,
+      functionCalling: true,
+      vision: true,
+      reasoning: true,
+    },
+    category: "powerful",
+  },
+  "gemini-2.5-flash-preview-05-20": {
+    id: "gemini-2.5-flash-preview-05-20",
+    name: "Gemini 2.5 Flash",
+    provider: "google",
+    description: "Ultra-fast latest Gemini model",
+    contextWindow: 1000000,
+    maxTokens: 8192,
+    pricing: { input: 0.075, output: 0.3 },
     capabilities: {
       chat: true,
       streaming: true,
@@ -77,7 +130,7 @@ export const modelConfigs: Record<string, ModelConfig> = {
       vision: true,
       reasoning: false,
     },
-    category: "powerful",
+    category: "fast",
   },
 };
 

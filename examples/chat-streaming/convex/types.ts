@@ -1,8 +1,11 @@
 // Type definitions for models, tools, and agent configurations
 // Type definitions for model and tool identifiers
 export type ModelId =
-  | "gpt-4o-mini"
-  | "gpt-4o";
+  | "gpt-4.1"
+  | "gpt-4.1-nano"
+  | "claude-4-sonnet-20250514"
+  | "gemini-2.5-pro-preview-06-05"
+  | "gemini-2.5-flash-preview-05-20";
 
 export type EmbeddingModelId =
   | "text-embedding-3-small"
