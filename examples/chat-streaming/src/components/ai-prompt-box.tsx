@@ -3,7 +3,7 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ArrowUp, Paperclip, Square, X, StopCircle, Mic, Globe, BrainCog, FolderCode } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import {
   Select,
@@ -44,7 +44,7 @@ interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement
 const Textarea = React.memo(React.forwardRef<HTMLTextAreaElement, TextareaProps>(({ className, ...props }, ref) => (
   <textarea
     className={cn(
-      "flex w-full rounded-md border-none bg-transparent px-3 py-2.5 text-base text-gray-100 placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] resize-none scrollbar-thin scrollbar-thumb-[#444444] scrollbar-track-transparent hover:scrollbar-thumb-[#555555]",
+      "flex w-full rounded-md border-none bg-transparent px-3 py-2.5 text-base text-gray-900 dark:text-gray-100 placeholder:text-gray-500 dark:placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] resize-none scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-[#444444] scrollbar-track-transparent hover:scrollbar-thumb-gray-400 dark:hover:scrollbar-thumb-[#555555]",
       className
     )}
     ref={ref}
@@ -66,7 +66,7 @@ const TooltipContent = React.memo(React.forwardRef<
     ref={ref}
     sideOffset={sideOffset}
     className={cn(
-      "z-50 overflow-hidden rounded-md border border-[#333333] bg-[#1F2023] px-3 py-1.5 text-sm text-white shadow-md animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+      "z-50 overflow-hidden rounded-md border border-gray-200 dark:border-[#333333] bg-white dark:bg-[#1F2023] px-3 py-1.5 text-sm text-gray-900 dark:text-white shadow-md animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
       className
     )}
     {...props}
@@ -348,7 +348,7 @@ const PromptInput = React.memo(React.forwardRef<HTMLDivElement, PromptInputProps
           <div
             ref={ref}
             className={cn(
-              "rounded-3xl border border-[#444444] bg-[#1F2023] p-3 shadow-[0_8px_30px_rgba(0,0,0,0.24)] transition-all duration-300",
+              "rounded-3xl border border-gray-200 dark:border-[#444444] bg-white dark:bg-[#1F2023] p-3 shadow-lg dark:shadow-[0_8px_30px_rgba(0,0,0,0.24)] transition-all duration-300",
               isLoading && "border-red-500/70",
               className
             )}
@@ -470,7 +470,7 @@ CustomDivider.displayName = "CustomDivider";
 
 // Main PromptInputBox Component
 interface PromptInputBoxProps {
-  onSend?: (message: string, files?: File[], modelId?: string) => void;
+  onSend?: (message: string, attachmentIds?: string[], modelId?: string) => void;
   onCancel?: () => void;
   isLoading?: boolean;
   placeholder?: string;
@@ -487,8 +487,14 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
   } = props;
   
   const [input, setInput] = React.useState("");
-  const [files, setFiles] = React.useState<File[]>([]);
-  const [filePreviews, setFilePreviews] = React.useState<{ [key: string]: string }>({});
+  const [attachments, setAttachments] = React.useState<Array<{
+    id: string;
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+    url?: string;
+    isUploading?: boolean;
+  }>>([]);
   const [selectedImage, setSelectedImage] = React.useState<string | null>(null);
   const [isRecording, setIsRecording] = React.useState(false);
   const [showSearch, setShowSearch] = React.useState(false);
@@ -501,24 +507,95 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
 
   // Use the backend model configurations
   const availableModels = useQuery(api.chatStreaming.getAvailableModelsQuery) || [];
+  
+  // Add upload mutations
+  const generateUploadUrl = useMutation(api.fileUpload.generateUploadUrl);
 
-  // Memoize file type check
-  const isImageFile = React.useCallback((file: File) => file.type.startsWith("image/"), []);
+  // Memoize file type check - now supports multiple types
+  const isFileSupported = React.useCallback((file: File) => {
+    const supportedTypes = [
+      // Images
+      "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+      // Documents
+      "application/pdf", "application/msword", 
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/plain", "text/csv",
+      // Audio
+      "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/mp4",
+      // Video
+      "video/mp4", "video/quicktime", "video/webm",
+    ];
+    return supportedTypes.includes(file.type);
+  }, []);
 
   // Memoize file processing function
-  const processFile = React.useCallback((file: File) => {
-    if (!isImageFile(file)) {
+  const processFile = React.useCallback(async (file: File) => {
+    if (!isFileSupported(file)) {
+      alert("File type not supported");
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
+    if (file.size > 20 * 1024 * 1024) { // 20MB limit
+      alert("File size too large (max 20MB)");
       return;
     }
-    setFiles([file]);
-    const reader = new FileReader();
-    reader.onload = (e) => setFilePreviews({ [file.name]: e.target?.result as string });
-    reader.readAsDataURL(file);
-  }, [isImageFile]);
+
+    // Create temporary attachment entry
+    const tempId = `temp_${Date.now()}`;
+    const newAttachment = {
+      id: tempId,
+      fileName: file.name,
+      fileType: file.type,
+      fileSize: file.size,
+      isUploading: true,
+    };
+
+    setAttachments(prev => [...prev, newAttachment]);
+
+    try {
+      // Get upload URL
+      const uploadUrl = await generateUploadUrl();
+      
+      // Upload file
+      const response = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+
+      if (!response.ok) {
+        throw new Error("Upload failed");
+      }
+
+      const { storageId } = await response.json();
+
+      // Just store the storage ID directly
+      setAttachments(prev => prev.map(att => 
+        att.id === tempId 
+          ? { ...att, id: storageId, isUploading: false }
+          : att
+      ));
+
+      // Create preview URL for images
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setAttachments(prev => prev.map(att => 
+            att.id === tempId || att.id === storageId
+              ? { ...att, url: e.target?.result as string }
+              : att
+          ));
+        };
+        reader.readAsDataURL(file);
+      }
+
+    } catch (error) {
+      console.error("File upload failed:", error);
+      alert("File upload failed");
+      // Remove failed upload
+      setAttachments(prev => prev.filter(att => att.id !== tempId));
+    }
+  }, [isFileSupported, generateUploadUrl]);
 
   // Memoize drag handlers
   const handleDragOver = React.useCallback((e: React.DragEvent) => {
@@ -534,17 +611,18 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
   const handleDrop = React.useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const files = Array.from(e.dataTransfer.files);
-    const imageFiles = files.filter((file) => isImageFile(file));
-    if (imageFiles.length > 0) processFile(imageFiles[0]);
-  }, [isImageFile, processFile]);
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    droppedFiles.forEach(file => {
+      if (isFileSupported(file)) {
+        processFile(file);
+      }
+    });
+  }, [isFileSupported, processFile]);
 
-  // Memoize file removal handler
-  const handleRemoveFile = React.useCallback((index: number) => {
-    const fileToRemove = files[index];
-    if (fileToRemove && filePreviews[fileToRemove.name]) setFilePreviews({});
-    setFiles([]);
-  }, [files, filePreviews]);
+  // Memoize attachment removal handler
+  const handleRemoveAttachment = React.useCallback((attachmentId: string) => {
+    setAttachments(prev => prev.filter(att => att.id !== attachmentId));
+  }, []);
 
   // Memoize image modal handler
   const openImageModal = React.useCallback((imageUrl: string) => setSelectedImage(imageUrl), []);
@@ -586,38 +664,40 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
 
   // Memoize submit handler
   const handleSubmit = React.useCallback(() => {
-    if (input.trim() || files.length > 0) {
+    if (input.trim() || attachments.length > 0) {
       let messagePrefix = "";
       if (showSearch) messagePrefix = "[Search: ";
       else if (showThink) messagePrefix = "[Think: ";
       else if (showCanvas) messagePrefix = "[Canvas: ";
       const formattedInput = messagePrefix ? `${messagePrefix}${input}]` : input;
-      onSend(formattedInput, files, selectedModel);
+      const attachmentIds = attachments.filter(att => !att.isUploading).map(att => att.id);
+      onSend(formattedInput, attachmentIds, selectedModel);
       setInput("");
-      setFiles([]);
-      setFilePreviews({});
+      setAttachments([]);
     }
-  }, [input, files, showSearch, showThink, showCanvas, onSend]);
+  }, [input, attachments, showSearch, showThink, showCanvas, onSend, selectedModel]);
 
   // Memoize recording handlers
   const handleStartRecording = React.useCallback(() => {
     // Started recording
   }, []);
 
-      const handleStopRecording = React.useCallback((duration: number) => {
-      setIsRecording(false);
-      onSend(`[Voice message - ${duration} seconds]`, [], selectedModel);
-    }, [onSend, selectedModel]);
+  const handleStopRecording = React.useCallback((duration: number) => {
+    setIsRecording(false);
+    onSend(`[Voice message - ${duration} seconds]`, [], selectedModel);
+  }, [onSend, selectedModel]);
 
   // Memoize content state
-  const hasContent = React.useMemo(() => input.trim() !== "" || files.length > 0, [input, files.length]);
+  const hasContent = React.useMemo(() => input.trim() !== "" || attachments.length > 0, [input, attachments.length]);
 
   // Memoize upload click handler
   const handleUploadClick = React.useCallback(() => uploadInputRef.current?.click(), []);
 
   // Memoize file input change handler
   const handleFileInputChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) processFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      Array.from(e.target.files).forEach(file => processFile(file));
+    }
     if (e.target) e.target.value = "";
   }, [processFile]);
 
@@ -659,7 +739,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
         isLoading={isLoading}
         onSubmit={handleSubmit}
         className={cn(
-          "w-full max-w-2xl mx-auto bg-[#1F2023] border-[#444444] shadow-[0_8px_30px_rgba(0,0,0,0.24)] transition-all duration-300 ease-in-out",
+          "w-full max-w-2xl mx-auto bg-white dark:bg-[#1F2023] border-gray-200 dark:border-[#444444] shadow-lg dark:shadow-[0_8px_30px_rgba(0,0,0,0.24)] transition-all duration-300 ease-in-out",
           isRecording && "border-red-500/70",
           className
         )}
@@ -669,29 +749,51 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {files.length > 0 && !isRecording && (
+        {attachments.length > 0 && !isRecording && (
           <div className="flex flex-wrap gap-2 p-0 pb-1 transition-all duration-300">
-            {files.map((file, index) => (
-              <div key={index} className="relative group">
-                {file.type.startsWith("image/") && filePreviews[file.name] && (
+            {attachments.map((attachment) => (
+              <div key={attachment.id} className="relative group">
+                {attachment.fileType.startsWith("image/") && attachment.url ? (
                   <div
                     className="w-16 h-16 rounded-xl overflow-hidden cursor-pointer transition-all duration-300"
-                    onClick={() => openImageModal(filePreviews[file.name])}
+                    onClick={() => openImageModal(attachment.url!)}
                   >
                     <img
-                      src={filePreviews[file.name]}
-                      alt={file.name}
+                      src={attachment.url}
+                      alt={attachment.fileName}
                       className="h-full w-full object-cover"
                     />
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleRemoveFile(index);
+                        handleRemoveAttachment(attachment.id);
                       }}
                       className="absolute top-1 right-1 rounded-full bg-black/70 p-0.5 opacity-100 transition-opacity"
                     >
                       <X className="h-3 w-3 text-white" />
                     </button>
+                    {attachment.isUploading && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                    <Paperclip className="w-4 h-4 text-gray-500" />
+                    <span className="text-sm text-gray-700 dark:text-gray-300 max-w-20 truncate">
+                      {attachment.fileName}
+                    </span>
+                    <button
+                      onClick={() => handleRemoveAttachment(attachment.id)}
+                      className="rounded-full bg-gray-200 dark:bg-gray-700 p-0.5 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                      disabled={attachment.isUploading}
+                    >
+                      <X className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                    </button>
+                    {attachment.isUploading && (
+                      <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                    )}
                   </div>
                 )}
               </div>
@@ -726,10 +828,10 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
               isRecording ? "opacity-0 invisible h-0" : "opacity-100 visible"
             )}
           >
-            <PromptInputAction tooltip="Upload image">
+            <PromptInputAction tooltip="Upload files (images, documents, audio, video)">
               <button
                 onClick={handleUploadClick}
-                className="flex h-8 w-8 text-[#9CA3AF] cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-gray-600/30 hover:text-[#D1D5DB]"
+                className="flex h-8 w-8 text-gray-500 dark:text-[#9CA3AF] cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-gray-100 dark:hover:bg-gray-600/30 hover:text-gray-700 dark:hover:text-[#D1D5DB]"
                 disabled={isLoading || isRecording}
               >
                 <Paperclip className="h-5 w-5 transition-colors" />
@@ -738,14 +840,15 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
                   type="file"
                   className="hidden"
                   onChange={handleFileInputChange}
-                  accept="image/*"
+                  accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,audio/*,video/*"
+                  multiple
                 />
               </button>
             </PromptInputAction>
 
             <div className="relative">
               <Select value={selectedModel} onValueChange={setSelectedModel}>
-                <SelectTrigger className="w-36 h-8 bg-transparent border border-gray-700/50 text-sm text-gray-300 hover:text-white hover:border-gray-600 transition-colors rounded-md">
+                <SelectTrigger className="w-36 h-8 bg-transparent border border-gray-300 dark:border-gray-700/50 text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:border-gray-400 dark:hover:border-gray-600 transition-colors rounded-md">
                   <SelectValue placeholder="Model" />
                 </SelectTrigger>
                 <SelectContent className="min-w-[200px]">
@@ -771,7 +874,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
                   "rounded-full transition-all flex items-center gap-1 px-2 py-1 border h-8",
                   showSearch
                     ? "bg-[#1EAEDB]/15 border-[#1EAEDB] text-[#1EAEDB]"
-                    : "bg-transparent border-transparent text-[#9CA3AF] hover:text-[#D1D5DB]"
+                    : "bg-transparent border-transparent text-gray-500 dark:text-[#9CA3AF] hover:text-gray-700 dark:hover:text-[#D1D5DB]"
                 )}
               >
                 <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
@@ -808,7 +911,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
                   "rounded-full transition-all flex items-center gap-1 px-2 py-1 border h-8",
                   showThink
                     ? "bg-[#8B5CF6]/15 border-[#8B5CF6] text-[#8B5CF6]"
-                    : "bg-transparent border-transparent text-[#9CA3AF] hover:text-[#D1D5DB]"
+                    : "bg-transparent border-transparent text-gray-500 dark:text-[#9CA3AF] hover:text-gray-700 dark:hover:text-[#D1D5DB]"
                 )}
               >
                 <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
@@ -845,7 +948,7 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
                   "rounded-full transition-all flex items-center gap-1 px-2 py-1 border h-8",
                   showCanvas
                     ? "bg-[#F97316]/15 border-[#F97316] text-[#F97316]"
-                    : "bg-transparent border-transparent text-[#9CA3AF] hover:text-[#D1D5DB]"
+                    : "bg-transparent border-transparent text-gray-500 dark:text-[#9CA3AF] hover:text-gray-700 dark:hover:text-[#D1D5DB]"
                 )}
               >
                 <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
@@ -891,21 +994,21 @@ export const PromptInputBox = React.memo(React.forwardRef<HTMLDivElement, Prompt
               className={cn(
                 "h-8 w-8 rounded-full transition-all duration-200",
                 isRecording
-                  ? "bg-transparent hover:bg-gray-600/30 text-red-500 hover:text-red-400"
+                  ? "bg-transparent hover:bg-gray-100 dark:hover:bg-gray-600/30 text-red-500 hover:text-red-400"
                   : hasContent
-                  ? "bg-white hover:bg-white/80 text-[#1F2023]"
-                  : "bg-transparent hover:bg-gray-600/30 text-[#9CA3AF] hover:text-[#D1D5DB]"
+                  ? "bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-white/80 text-white dark:text-[#1F2023]"
+                  : "bg-transparent hover:bg-gray-100 dark:hover:bg-gray-600/30 text-gray-500 dark:text-[#9CA3AF] hover:text-gray-700 dark:hover:text-[#D1D5DB]"
               )}
               onClick={handleMainButtonClick}
             >
               {isLoading ? (
-                <Square className="h-4 w-4 fill-[#1F2023] animate-pulse" />
+                <Square className="h-4 w-4 fill-white dark:fill-[#1F2023] animate-pulse" />
               ) : isRecording ? (
                 <StopCircle className="h-5 w-5 text-red-500" />
               ) : hasContent ? (
-                <ArrowUp className="h-4 w-4 text-[#1F2023]" />
+                <ArrowUp className="h-4 w-4 text-white dark:text-[#1F2023]" />
               ) : (
-                <Mic className="h-5 w-5 text-[#1F2023] transition-colors" />
+                <Mic className="h-5 w-5 text-gray-500 dark:text-[#9CA3AF] transition-colors" />
               )}
             </Button>
           </PromptInputAction>

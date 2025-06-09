@@ -70,8 +70,13 @@ const defaultAgent = new Agent(components.agent, {
 // Streaming, where generate the prompt message first, then asynchronously
 // generate the stream response.
 export const streamStoryAsynchronously = mutation({
-  args: { prompt: v.string(), threadId: v.string(), modelId: v.optional(v.string()) },
-  handler: async (ctx, { prompt, threadId, modelId = "gpt-4.1-nano" }) => {
+  args: { 
+    prompt: v.string(), 
+    threadId: v.string(), 
+    modelId: v.optional(v.string()),
+    attachmentIds: v.optional(v.array(v.id("_storage"))),
+  },
+  handler: async (ctx, { prompt, threadId, modelId = "gpt-4.1-nano", attachmentIds = [] }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
     const validatedThreadId = ThreadIdSchema.parse(threadId);
@@ -89,13 +94,19 @@ export const streamStoryAsynchronously = mutation({
       prompt: validatedPrompt,
       userId, // Pass the userId to the internal action
       modelId: validatedModelId,
+      attachmentIds,
     });
   },
 });
 
 export const sendMessage = mutation({
-  args: { threadId: v.id("threads"), prompt: v.string(), modelId: v.optional(v.string()) },
-  handler: async (ctx, { threadId, prompt, modelId = "gpt-4.1-nano" }) => {
+  args: { 
+    threadId: v.id("threads"), 
+    prompt: v.string(), 
+    modelId: v.optional(v.string()),
+    attachmentIds: v.optional(v.array(v.id("_storage"))),
+  },
+  handler: async (ctx, { threadId, prompt, modelId = "gpt-4.1-nano", attachmentIds = [] }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
     const validatedModelId = ModelIdSchema.parse(modelId);
@@ -112,13 +123,20 @@ export const sendMessage = mutation({
       prompt: validatedPrompt,
       userId,
       modelId: validatedModelId,
+      attachmentIds,
     });
   },
 });
 
 export const createAgentThreadAndSaveMessage = internalAction({
-  args: { prompt: v.string(), threadId: v.string(), userId: v.string(), modelId: v.optional(v.string()) },
-  handler: async (ctx, { prompt, threadId, userId, modelId = "gpt-4.1-nano" }) => {
+  args: { 
+    prompt: v.string(), 
+    threadId: v.string(), 
+    userId: v.string(), 
+    modelId: v.optional(v.string()),
+    attachmentIds: v.optional(v.array(v.id("_storage"))),
+  },
+  handler: async (ctx, { prompt, threadId, userId, modelId = "gpt-4.1-nano", attachmentIds = [] }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
     const validatedThreadId = ThreadIdSchema.parse(threadId);
@@ -148,22 +166,132 @@ export const createAgentThreadAndSaveMessage = internalAction({
       });
     }
     
+    // Build multimodal message content
+    const messageContent: Array<any> = [
+      { type: "text", text: validatedPrompt }
+    ];
+    
+    // Process attachments and convert to proper content blocks
+    if (attachmentIds.length > 0) {
+      for (const storageId of attachmentIds) {
+        try {
+          // Get file metadata from storage system table using runQuery
+          const metadata = await ctx.runQuery(internal.chatStreaming.getFileMetadata, { storageId });
+          if (!metadata) {
+            console.warn(`File metadata not found for storage ID: ${storageId}`);
+            continue;
+          }
+
+          // Get file URL
+          const fileUrl = await ctx.storage.getUrl(storageId);
+          if (!fileUrl) {
+            console.warn(`File URL not found for storage ID: ${storageId}`);
+            continue;
+          }
+
+          // Add appropriate content block based on file type
+          if (metadata.contentType?.startsWith('image/')) {
+            // For images, use image content block
+            messageContent.push({
+              type: "image",
+              image: new URL(fileUrl),
+              mimeType: metadata.contentType,
+            });
+          } else if (metadata.contentType === 'application/pdf' || 
+                     metadata.contentType?.includes('document') ||
+                     metadata.contentType?.startsWith('text/') ||
+                     metadata.contentType?.startsWith('audio/')) {
+            // For PDFs and other files, fetch the actual file data
+            try {
+              const response = await fetch(fileUrl);
+              if (response.ok) {
+                const fileData = await response.arrayBuffer();
+                messageContent.push({
+                  type: "file",
+                  data: fileData,
+                  mimeType: metadata.contentType,
+                  filename: `file_${storageId}`, // Optional filename
+                });
+              } else {
+                console.warn(`Failed to fetch file data for ${storageId}: ${response.status}`);
+                // Fallback: mention the file in text
+                messageContent.push({
+                  type: "text",
+                  text: `\n[File attached: ${metadata.contentType}, ${metadata.size} bytes]`
+                });
+              }
+            } catch (error) {
+              console.error(`Error fetching file data for ${storageId}:`, error);
+              // Fallback: mention the file in text
+              messageContent.push({
+                type: "text",
+                text: `\n[File attached: ${metadata.contentType}, ${metadata.size} bytes]`
+              });
+            }
+          } else {
+            // For other file types, mention them in text
+            messageContent.push({
+              type: "text",
+              text: `\n[File attached: ${metadata.contentType || 'unknown type'}, ${metadata.size} bytes]`
+            });
+          }
+        } catch (error) {
+          console.error(`Error processing attachment ${storageId}:`, error);
+        }
+      }
+    }
+    
+    // Save message attachments association for UI display if there are attachments
+    if (attachmentIds.length > 0) {
+      await ctx.runMutation(internal.chatStreaming.saveMessageAttachments, {
+        threadId: validatedThreadId,
+        messageContent: validatedPrompt,
+        attachmentIds,
+        userId: validatedUserId,
+      });
+    }
+    
     // Continue with the existing thread and generate streaming text with deltas
     const { thread } = await agent.continueThread(ctx, { threadId: agentThreadId });
     
     // Use streamText instead of generateText to enable real-time streaming with deltas
-    const result = await thread.streamText(
-      { prompt: validatedPrompt },
-      { 
-        // Enable saving of stream deltas for real-time updates
-        saveStreamDeltas: true,
-        // Save the generated output to thread history
-        storageOptions: {
-          saveOutputMessages: true,
-          saveAnyInputMessages: true,
+    let result;
+    if (attachmentIds.length > 0) {
+      // Use multimodal messages format when attachments are present
+      result = await thread.streamText(
+        { 
+          messages: [
+            {
+              role: "user", 
+              content: messageContent
+            }
+          ]
+        },
+        { 
+          // Enable saving of stream deltas for real-time updates
+          saveStreamDeltas: true,
+          // Save the generated output to thread history
+          storageOptions: {
+            saveOutputMessages: true,
+            saveAnyInputMessages: true,
+          }
         }
-      }
-    );
+      );
+    } else {
+      // Use simple prompt format when no attachments (like original code)
+      result = await thread.streamText(
+        { prompt: validatedPrompt },
+        { 
+          // Enable saving of stream deltas for real-time updates
+          saveStreamDeltas: true,
+          // Save the generated output to thread history
+          storageOptions: {
+            saveOutputMessages: true,
+            saveAnyInputMessages: true,
+          }
+        }
+      );
+    }
     
     // Consume the stream to process all deltas
     await result.consumeStream();
@@ -296,20 +424,24 @@ export const generateThreadTitle = mutation({
 export const getLocalThread = internalQuery({
   args: { threadId: v.string() },
   handler: async (ctx, { threadId }) => {
-    const validatedThreadId = ThreadIdSchema.parse(threadId);
-    return await ctx.db.get(validatedThreadId as Id<"threads">);
+    return await ctx.db.query("threads")
+      .filter(q => q.eq(q.field("_id"), threadId))
+      .first();
+  },
+});
+
+// Add internal query to get file metadata
+export const getFileMetadata = internalQuery({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    return await ctx.db.system.get(storageId);
   },
 });
 
 export const updateLocalThreadAgentId = internalMutation({
   args: { threadId: v.string(), agentThreadId: v.string() },
   handler: async (ctx, { threadId, agentThreadId }) => {
-    const validatedThreadId = ThreadIdSchema.parse(threadId);
-    const validatedAgentThreadId = z.string().parse(agentThreadId);
-    
-    await ctx.db.patch(validatedThreadId as Id<"threads">, {
-      agentThreadId: validatedAgentThreadId,
-    });
+    await ctx.db.patch(threadId as Id<"threads">, { agentThreadId });
   },
 });
 
@@ -364,8 +496,9 @@ export const sendMessageAndUpdateThread = mutation({
     prompt: v.string(),
     isFirstMessage: v.boolean(),
     modelId: v.optional(v.string()),
+    attachmentIds: v.optional(v.array(v.id("_storage"))),
   },
-  handler: async (ctx, { threadId, prompt, isFirstMessage, modelId = "gpt-4.1-nano" }) => {
+  handler: async (ctx, { threadId, prompt, isFirstMessage, modelId = "gpt-4.1-nano", attachmentIds = [] }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
     const validatedModelId = ModelIdSchema.parse(modelId);
@@ -382,6 +515,7 @@ export const sendMessageAndUpdateThread = mutation({
         prompt: validatedPrompt,
         userId,
         modelId: validatedModelId,
+        attachmentIds,
       },
     );
 
@@ -518,5 +652,41 @@ export const getModelUsageStats = query({
       costEstimate: 12.50,
       timeRange: validatedTimeRange,
     };
+  },
+});
+
+// Add internal mutation to save message attachments association
+export const saveMessageAttachments = internalMutation({
+  args: { 
+    threadId: v.string(), 
+    messageContent: v.string(),
+    attachmentIds: v.array(v.id("_storage")),
+    userId: v.string(),
+  },
+  handler: async (ctx, { threadId, messageContent, attachmentIds, userId }) => {
+    // Save to our local messages table for UI display
+    await ctx.db.insert("messages", {
+      threadId,
+      body: messageContent,
+      userId: userId, // Now matches schema as string
+      attachments: attachmentIds,
+    });
+  },
+});
+
+// Add query to get message attachments for a thread
+export const getThreadAttachments = query({
+  args: { threadId: v.id("threads") },
+  handler: async (ctx, { threadId }) => {
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+      .collect();
+    
+    return messages.map(msg => ({
+      messageBody: msg.body,
+      attachments: msg.attachments || [],
+      _creationTime: msg._creationTime,
+    }));
   },
 });

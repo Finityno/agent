@@ -11,6 +11,7 @@
 import type * as agents from "../agents.js";
 import type * as auth from "../auth.js";
 import type * as chatStreaming from "../chatStreaming.js";
+import type * as fileUpload from "../fileUpload.js";
 import type * as http from "../http.js";
 import type * as models from "../models.js";
 import type * as providers from "../providers.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   auth: typeof auth;
   chatStreaming: typeof chatStreaming;
+  fileUpload: typeof fileUpload;
   http: typeof http;
   models: typeof models;
   providers: typeof providers;

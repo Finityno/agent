@@ -7,7 +7,9 @@ export default defineSchema({
   messages: defineTable({
     body: v.string(),
     threadId: v.string(),
-    userId: v.id("users"),
+    userId: v.string(),
+    // File attachments stored as storage IDs directly for AI integration
+    attachments: v.optional(v.array(v.id("_storage"))),
   })
     .index("by_threadId", ["threadId"])
     .index("by_userId", ["userId"]),

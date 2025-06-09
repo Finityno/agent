@@ -11,6 +11,7 @@ import {
   MessageContent,
 } from "@/components/ui/message"
 import { PromptInputBox } from "./ai-prompt-box"
+import { MessageAttachment } from "./MessageAttachment"
 import { ScrollButton } from "./ui/scroll-button"
 import { Button } from "./ui/button"
 import { SidebarTrigger } from "./ui/sidebar"
@@ -47,6 +48,7 @@ const MemoizedMessage = memo(({
   onCopyMessage,
   onEditMessage,
   onDeleteMessage,
+  threadAttachments,
 }: {
   message: any;
   index: number;
@@ -54,6 +56,11 @@ const MemoizedMessage = memo(({
   onCopyMessage: (content: string) => void;
   onEditMessage?: (messageId: string) => void;
   onDeleteMessage?: (messageId: string) => void;
+  threadAttachments?: Array<{
+    messageBody: string;
+    attachments: string[]; // Storage IDs as strings
+    _creationTime: number;
+  }>;
 }) => {
   const isAssistant = message.role !== "user"
   const isLastMessage = index === uiMessagesLength - 1
@@ -64,6 +71,34 @@ const MemoizedMessage = memo(({
   
   // For assistant messages, use smoothed content; for user messages, use original content
   const displayContent = isAssistant ? smoothedContent : message.content
+
+  // Extract attachments for this message from threadAttachments
+  const attachments = useMemo(() => {
+    if (!threadAttachments || !message.content || isAssistant) {
+      return []; // Only show attachments for user messages
+    }
+    
+    // Find matching attachment record by message content or closest timestamp
+    let matchingAttachment = threadAttachments.find(att => 
+      att.messageBody === message.content || 
+      message.content.includes(att.messageBody)
+    );
+    
+    // If no exact match, try to find by timestamp proximity (for user messages)
+    if (!matchingAttachment && message._creationTime) {
+      const sortedAttachments = [...threadAttachments].sort((a, b) => 
+        Math.abs(a._creationTime - message._creationTime) - Math.abs(b._creationTime - message._creationTime)
+      );
+      
+      // Only use timestamp matching if the message is recent and we have a close timestamp match
+      const closest = sortedAttachments[0];
+      if (closest && Math.abs(closest._creationTime - message._creationTime) < 5000) { // 5 second tolerance
+        matchingAttachment = closest;
+      }
+    }
+    
+    return matchingAttachment ? matchingAttachment.attachments : [];
+  }, [message.content, message._creationTime, threadAttachments, isAssistant]);
 
   // Memoize click handlers to prevent unnecessary re-renders
   const handleCopy = useCallback(() => {
@@ -165,7 +200,7 @@ const MemoizedMessage = memo(({
       )}
     >
       {isAssistant ? (
-        <div className="group flex w-full flex-col gap-0">
+        <div className="group flex w-full flex-col gap-2">
           <MessageContent
             className="text-foreground prose flex-1 rounded-lg bg-transparent p-0 ai-message-content"
             markdown
@@ -175,10 +210,23 @@ const MemoizedMessage = memo(({
           {assistantActions}
         </div>
       ) : (
-        <div className="group flex flex-col items-end gap-1">
+        <div className="group flex flex-col items-end gap-2">
           <MessageContent className="bg-muted text-primary max-w-[85%] rounded-3xl px-5 py-2.5 sm:max-w-[75%]">
             {displayContent}
           </MessageContent>
+          
+          {/* Display attachments for user messages */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 max-w-[85%] sm:max-w-[75%]">
+              {attachments.map((storageId, index) => (
+                <MessageAttachment 
+                  key={`${message.key}-attachment-${index}`}
+                  storageId={storageId as Id<"_storage">}
+                />
+              ))}
+            </div>
+          )}
+          
           {userActions}
         </div>
       )}
@@ -214,6 +262,12 @@ function ChatContent({
     threadMessagesOptions,
   );
   
+  // Fetch attachment associations for this thread
+  const threadAttachments = useConvexQuery(
+    api.chatStreaming.getThreadAttachments,
+    activeThreadId ? { threadId: activeThreadId } : "skip"
+  );
+  
   // Memoize mutations to prevent unnecessary re-creations
   const sendMessageAndUpdateThread = useMutation(
     api.chatStreaming.sendMessageAndUpdateThread,
@@ -237,7 +291,7 @@ function ChatContent({
   }, [])
 
   // Memoize submit handler
-  const handleSubmit = useCallback(async (prompt: string, files?: File[], modelId?: string) => {
+  const handleSubmit = useCallback(async (prompt: string, attachmentIds?: string[], modelId?: string) => {
     if (!prompt.trim()) return;
 
     let threadId = activeThreadId;
@@ -256,6 +310,7 @@ function ChatContent({
       threadId,
       isFirstMessage,
       modelId: modelId || "gpt-4.1-nano", // Default model if not specified
+      attachmentIds: attachmentIds as any || [], // Pass storage IDs directly
     });
   }, [activeThreadId, createThread, setActiveThreadId, messages?.results, sendMessageAndUpdateThread]);
 
@@ -322,6 +377,7 @@ function ChatContent({
                 onCopyMessage={handleCopyMessage}
                 onEditMessage={handleEditMessage}
                 onDeleteMessage={handleDeleteMessage}
+                threadAttachments={threadAttachments}
               />
             ))}
           </ChatContainerContent>
