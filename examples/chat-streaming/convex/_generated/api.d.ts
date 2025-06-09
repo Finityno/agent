@@ -8,13 +8,13 @@
  * @module
  */
 
-import type * as agents from "../agents.js";
 import type * as auth from "../auth.js";
 import type * as chatStreaming from "../chatStreaming.js";
+import type * as config_agents from "../config/agents.js";
+import type * as config_models from "../config/models.js";
+import type * as config_providers from "../config/providers.js";
 import type * as fileUpload from "../fileUpload.js";
 import type * as http from "../http.js";
-import type * as models from "../models.js";
-import type * as providers from "../providers.js";
 import type * as threads from "../threads.js";
 import type * as tools from "../tools.js";
 import type * as types from "../types.js";
@@ -35,13 +35,13 @@ import type {
  * ```
  */
 declare const fullApi: ApiFromModules<{
-  agents: typeof agents;
   auth: typeof auth;
   chatStreaming: typeof chatStreaming;
+  "config/agents": typeof config_agents;
+  "config/models": typeof config_models;
+  "config/providers": typeof config_providers;
   fileUpload: typeof fileUpload;
   http: typeof http;
-  models: typeof models;
-  providers: typeof providers;
   threads: typeof threads;
   tools: typeof tools;
   types: typeof types;

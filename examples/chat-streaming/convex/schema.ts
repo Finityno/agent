@@ -15,7 +15,7 @@ export default defineSchema({
     .index("by_userId", ["userId"]),
   threads: defineTable({
     userId: v.string(),
-    uuid: v.optional(v.string()), // UUID for URL routing - optional for backward compatibility
+    uuid: v.string(), // UUID for URL routing
     agentThreadId: v.optional(v.string()), // Agent thread ID for mapping
     title: v.optional(v.string()),
     summary: v.optional(v.string()),

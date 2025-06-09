@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ToolConfig, ToolId, ToolCategory } from "./types";
+import { ToolConfig, ToolCategory } from "./types";
+import { ToolId } from "./config/agents";
 
 // Zod schemas for tool validation
 const ToolConfigSchema = z.object({

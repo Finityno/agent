@@ -1,14 +1,56 @@
+// Agent configurations using centralized model definitions
 import { z } from "zod";
-import { AgentConfig, ModelId, EmbeddingModelId, ToolId } from "./types";
+import { ModelId, EmbeddingModelId, DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL } from "./models";
 
-// Zod schema for agent configuration validation
-const AgentConfigSchema = z.object({
+// Tool IDs - centralized here
+export const ToolId = z.enum([
+  "webSearch",
+  "codeAnalysis", 
+  "dataVisualization",
+  "documentSummary",
+  "taskPlanning",
+  "sentimentAnalysis"
+]);
+export type ToolId = z.infer<typeof ToolId>;
+
+// Agent configuration interface
+export interface AgentConfig {
+  name: string;
+  description: string;
+  instructions: string;
+  chatModel: ModelId;
+  embeddingModel: EmbeddingModelId;
+  tools: ToolId[];
+  capabilities: {
+    streaming: boolean;
+    vision: boolean;
+    reasoning: boolean;
+    webSearch: boolean;
+    codeAnalysis: boolean;
+  };
+  maxSteps: number;
+  maxRetries: number;
+  contextOptions?: {
+    includeToolCalls: boolean;
+    recentMessages: number;
+    searchOptions: {
+      limit: number;
+      textSearch: boolean;
+      vectorSearch: boolean;
+      messageRange: { before: number; after: number };
+    };
+    searchOtherThreads: boolean;
+  };
+}
+
+// Validation schema using centralized enums
+export const AgentConfigSchema = z.object({
   name: z.string(),
   description: z.string(),
   instructions: z.string(),
-  chatModel: z.enum(["gpt-4.1", "gpt-4.1-nano", "claude-4-sonnet-20250514", "gemini-2.5-pro-preview-06-05", "gemini-2.5-flash-preview-05-20"]),
-  embeddingModel: z.enum(["text-embedding-3-small", "text-embedding-3-large"]),
-  tools: z.array(z.enum(["webSearch", "codeAnalysis", "dataVisualization", "documentSummary", "taskPlanning", "sentimentAnalysis"])),
+  chatModel: ModelId,
+  embeddingModel: EmbeddingModelId,
+  tools: z.array(ToolId),
   capabilities: z.object({
     streaming: z.boolean(),
     vision: z.boolean(),
@@ -33,13 +75,12 @@ const AgentConfigSchema = z.object({
 
 // Predefined agent configurations
 export const agentConfigs: Record<string, AgentConfig> = {
-  // General purpose chat agent
   chatAgent: {
     name: "Chat Assistant",
     description: "General purpose conversational AI assistant",
     instructions: "You are a helpful, friendly, and knowledgeable AI assistant. Provide clear, accurate, and helpful responses to user questions. Be conversational but professional.",
-    chatModel: "gpt-4.1-nano",
-    embeddingModel: "text-embedding-3-small",
+    chatModel: DEFAULT_CHAT_MODEL,
+    embeddingModel: DEFAULT_EMBEDDING_MODEL,
     tools: ["sentimentAnalysis", "documentSummary"],
     capabilities: {
       streaming: true,
@@ -63,13 +104,12 @@ export const agentConfigs: Record<string, AgentConfig> = {
     },
   },
 
-  // Fast response agent
   fastAgent: {
-    name: "Quick Assistant",
+    name: "Quick Assistant", 
     description: "Optimized for fast responses and quick interactions",
     instructions: "You are a quick and efficient assistant. Provide concise, helpful responses. Focus on being fast and accurate while maintaining helpfulness.",
-    chatModel: "gpt-4.1-nano",
-    embeddingModel: "text-embedding-3-small",
+    chatModel: DEFAULT_CHAT_MODEL,
+    embeddingModel: DEFAULT_EMBEDDING_MODEL,
     tools: [],
     capabilities: {
       streaming: true,
@@ -94,25 +134,17 @@ export const agentConfigs: Record<string, AgentConfig> = {
   },
 };
 
-// Get agent recommendations based on user input (simplified)
-export function recommendAgent(userInput: string): keyof typeof agentConfigs {
-  const validatedInput = z.string().parse(userInput);
-  const input = validatedInput.toLowerCase();
-  
-  // Quick/simple requests
-  if (input.includes("quick") || input.includes("simple") || input.includes("fast") || 
-      input.length < 20) {
-    return "fastAgent";
+// Utility functions
+export function getAgentConfig(agentName: keyof typeof agentConfigs): AgentConfig {
+  const config = agentConfigs[agentName];
+  if (!config) {
+    throw new Error(`Unknown agent: ${agentName}`);
   }
-  
-  // Default to general chat agent
-  return "chatAgent";
+  return AgentConfigSchema.parse(config);
 }
 
-// Export agent configurations for frontend (simplified)
 export function getAvailableAgents() {
   return Object.entries(agentConfigs).map(([key, config]) => {
-    // Validate config with Zod before returning
     const validatedConfig = AgentConfigSchema.parse(config);
     return {
       id: key,
@@ -125,11 +157,15 @@ export function getAvailableAgents() {
   });
 }
 
-// Get agent configuration by name
-export function getAgentConfig(agentName: keyof typeof agentConfigs): AgentConfig {
-  const config = agentConfigs[agentName];
-  if (!config) {
-    throw new Error(`Unknown agent: ${agentName}`);
+export function recommendAgent(userInput: string): keyof typeof agentConfigs {
+  const input = userInput.toLowerCase();
+  
+  // Quick/simple requests
+  if (input.includes("quick") || input.includes("simple") || input.includes("fast") || 
+      input.length < 20) {
+    return "fastAgent";
   }
-  return AgentConfigSchema.parse(config);
+  
+  // Default to general chat agent
+  return "chatAgent";
 } 

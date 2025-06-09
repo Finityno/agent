@@ -1,50 +1,51 @@
-// Model configurations and utilities for AI providers
+// Centralized model configuration - single source of truth
 import { z } from "zod";
-import { ModelConfig, ModelId, EmbeddingModelId } from "./types";
 
-// Zod schemas for validation
-const ModelConfigSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  provider: z.enum(["openai", "anthropic", "google", "groq", "perplexity"]),
-  description: z.string(),
-  contextWindow: z.number(),
-  maxTokens: z.number(),
-  pricing: z.object({
-    input: z.number(),
-    output: z.number(),
-  }),
-  capabilities: z.object({
-    chat: z.boolean(),
-    streaming: z.boolean(),
-    functionCalling: z.boolean(),
-    vision: z.boolean(),
-    reasoning: z.boolean(),
-  }),
-  category: z.enum(["fast", "balanced", "powerful", "reasoning"]),
-});
+// Model provider types
+export const ModelProvider = z.enum(["openai", "anthropic", "google", "groq", "perplexity"]);
+export type ModelProvider = z.infer<typeof ModelProvider>;
 
-const EmbeddingConfigSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  provider: z.literal("openai"),
-  dimensions: z.number(),
-  pricing: z.number(),
-});
+// Model IDs - keep this as the single source of truth
+export const ModelId = z.enum([
+  "gpt-4.1",
+  "gpt-4.1-nano", 
+  "claude-4-sonnet-20250514",
+  "gemini-2.5-pro-preview-06-05",
+  "gemini-2.5-flash-preview-05-20"
+]);
+export type ModelId = z.infer<typeof ModelId>;
 
-// Environment variable validation
-function validateEnvVar(name: string, value: string | undefined): string {
-  if (!value) {
-    throw new Error(
-      `Missing required environment variable: ${name}. Please set it in your Convex environment.`
-    );
-  }
-  return value;
+// Embedding model IDs
+export const EmbeddingModelId = z.enum([
+  "text-embedding-3-small",
+  "text-embedding-3-large"
+]);
+export type EmbeddingModelId = z.infer<typeof EmbeddingModelId>;
+
+// Model configuration interface
+export interface ModelConfig {
+  id: ModelId;
+  name: string;
+  provider: ModelProvider;
+  description: string;
+  contextWindow: number;
+  maxTokens: number;
+  pricing: {
+    input: number; // per 1M tokens
+    output: number; // per 1M tokens
+  };
+  capabilities: {
+    chat: boolean;
+    streaming: boolean;
+    functionCalling: boolean;
+    vision: boolean;
+    reasoning: boolean;
+  };
+  category: "fast" | "balanced" | "powerful" | "reasoning";
 }
 
-// Model configurations matching the user's specified model IDs
-export const modelConfigs: Record<string, ModelConfig> = {
-  // OpenAI Models
+// Model configurations
+export const modelConfigs: Record<ModelId, ModelConfig> = {
   "gpt-4.1": {
     id: "gpt-4.1",
     name: "GPT-4.1",
@@ -79,7 +80,6 @@ export const modelConfigs: Record<string, ModelConfig> = {
     },
     category: "fast",
   },
-  // Anthropic Models
   "claude-4-sonnet-20250514": {
     id: "claude-4-sonnet-20250514",
     name: "Claude 4 Sonnet",
@@ -97,7 +97,6 @@ export const modelConfigs: Record<string, ModelConfig> = {
     },
     category: "powerful",
   },
-  // Google Models  
   "gemini-2.5-pro-preview-06-05": {
     id: "gemini-2.5-pro-preview-06-05",
     name: "Gemini 2.5 Pro",
@@ -134,7 +133,7 @@ export const modelConfigs: Record<string, ModelConfig> = {
   },
 };
 
-// Embedding models
+// Embedding configurations
 export const embeddingConfigs: Record<EmbeddingModelId, {
   id: EmbeddingModelId;
   name: string;
@@ -145,46 +144,44 @@ export const embeddingConfigs: Record<EmbeddingModelId, {
   "text-embedding-3-small": {
     id: "text-embedding-3-small",
     name: "OpenAI Text Embedding 3 Small",
-    provider: "openai" as const,
+    provider: "openai",
     dimensions: 1536,
-    pricing: 0.02, // per 1M tokens
+    pricing: 0.02,
   },
   "text-embedding-3-large": {
-    id: "text-embedding-3-large",
+    id: "text-embedding-3-large", 
     name: "OpenAI Text Embedding 3 Large",
-    provider: "openai" as const,
+    provider: "openai",
     dimensions: 3072,
-    pricing: 0.13, // per 1M tokens
+    pricing: 0.13,
   },
 };
 
-// Get available models by category
+// Default models - single place to define defaults
+export const DEFAULT_CHAT_MODEL: ModelId = "gpt-4.1-nano";
+export const DEFAULT_EMBEDDING_MODEL: EmbeddingModelId = "text-embedding-3-small";
+
+// Utility functions
+export function getModelConfig(modelId: ModelId): ModelConfig {
+  return modelConfigs[modelId];
+}
+
 export function getModelsByCategory(category: ModelConfig["category"]) {
-  const validatedCategory = z.enum(["fast", "balanced", "powerful", "reasoning"]).parse(category);
-  return Object.values(modelConfigs).filter(
-    (model) => model.category === validatedCategory
-  );
+  return Object.values(modelConfigs).filter(model => model.category === category);
 }
 
-// Get models by capability
 export function getModelsByCapability(capability: keyof ModelConfig["capabilities"]) {
-  const validatedCapability = z.enum(["chat", "streaming", "functionCalling", "vision", "reasoning"]).parse(capability);
-  return Object.values(modelConfigs).filter(model => model.capabilities[validatedCapability]);
+  return Object.values(modelConfigs).filter(model => model.capabilities[capability]);
 }
 
-// Export model configurations for frontend
 export function getAvailableModels() {
-  return Object.values(modelConfigs).map(config => {
-    // Validate each config with Zod before returning
-    const validatedConfig = ModelConfigSchema.parse(config);
-    return {
-      id: validatedConfig.id,
-      name: validatedConfig.name,
-      provider: validatedConfig.provider,
-      description: validatedConfig.description,
-      category: validatedConfig.category,
-      capabilities: validatedConfig.capabilities,
-      pricing: validatedConfig.pricing,
-    };
-  });
+  return Object.values(modelConfigs).map(config => ({
+    id: config.id,
+    name: config.name,
+    provider: config.provider,
+    description: config.description,
+    category: config.category,
+    capabilities: config.capabilities,
+    pricing: config.pricing,
+  }));
 } 

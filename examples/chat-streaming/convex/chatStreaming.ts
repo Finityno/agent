@@ -2,7 +2,9 @@ import { z } from "zod";
 import { paginationOptsValidator } from "convex/server";
 import { Agent, vStreamArgs } from "@convex-dev/agent";
 import { components, internal } from "./_generated/api";
-import { getAvailableModels, modelConfigs } from "./models";
+import { ModelId, DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL, getAvailableModels } from "./config/models";
+import { createModelInstance, createEmbeddingInstance } from "./config/providers";
+import { getAvailableAgents } from "./config/agents";
 import {
   action,
   ActionCtx,
@@ -17,53 +19,29 @@ import {
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { v4 as uuidv4 } from "uuid";
-import { openai } from "@ai-sdk/openai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
 
 // Zod schemas for validation
 const ThreadIdSchema = z.string();
 const PromptSchema = z.string().min(1, "Prompt cannot be empty");
-const ModelIdSchema = z.string();
 
 // Function to create agent with specific model
-async function createAgentWithModel(modelId: string) {
-  const modelConfig = modelConfigs[modelId];
-  if (!modelConfig) {
-    throw new Error(`Model ${modelId} not found`);
-  }
-
-  let chatModel;
-  switch (modelConfig.provider) {
-    case "openai":
-      chatModel = openai(modelId);
-      break;
-    case "anthropic":
-      const { anthropic } = await import("@ai-sdk/anthropic");
-      chatModel = anthropic(modelId);
-      break;
-    case "google":
-      const { google } = await import("@ai-sdk/google");
-      chatModel = google(modelId);
-      break;
-    default:
-      // Fallback to OpenAI
-      chatModel = openai("gpt-4.1-nano");
-  }
+async function createAgentWithModel(modelId: ModelId) {
+  const chatModel = createModelInstance(modelId);
+  const embeddingModel = createEmbeddingInstance(DEFAULT_EMBEDDING_MODEL);
 
   return new Agent(components.agent, {
-    name: `${modelConfig.name} Agent`,
+    name: `${modelId} Agent`,
     chat: chatModel,
-    textEmbedding: openai.textEmbedding("text-embedding-3-small"),
+    textEmbedding: embeddingModel,
     instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
   });
 }
 
-// Create a default agent instance for queries (since queries can't use dynamic imports)
+// Create a default agent instance for queries
 const defaultAgent = new Agent(components.agent, {
   name: "Default Chat Agent",
-  chat: openai("gpt-4.1-nano"),
-  textEmbedding: openai.textEmbedding("text-embedding-3-small"),
+  chat: createModelInstance(DEFAULT_CHAT_MODEL),
+  textEmbedding: createEmbeddingInstance(DEFAULT_EMBEDDING_MODEL),
   instructions: "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
 });
 
@@ -76,11 +54,11 @@ export const streamStoryAsynchronously = mutation({
     modelId: v.optional(v.string()),
     attachmentIds: v.optional(v.array(v.id("_storage"))),
   },
-  handler: async (ctx, { prompt, threadId, modelId = "gpt-4.1-nano", attachmentIds = [] }) => {
+  handler: async (ctx, { prompt, threadId, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [] }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
     const validatedThreadId = ThreadIdSchema.parse(threadId);
-    const validatedModelId = ModelIdSchema.parse(modelId);
+    const validatedModelId = ModelId.parse(modelId);
     
     await authorizeThreadAccess(ctx, validatedThreadId as Id<"threads">);
     
@@ -106,10 +84,10 @@ export const sendMessage = mutation({
     modelId: v.optional(v.string()),
     attachmentIds: v.optional(v.array(v.id("_storage"))),
   },
-  handler: async (ctx, { threadId, prompt, modelId = "gpt-4.1-nano", attachmentIds = [] }) => {
+  handler: async (ctx, { threadId, prompt, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [] }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
-    const validatedModelId = ModelIdSchema.parse(modelId);
+    const validatedModelId = ModelId.parse(modelId);
     
     await authorizeThreadAccess(ctx, threadId);
 
@@ -136,12 +114,12 @@ export const createAgentThreadAndSaveMessage = internalAction({
     modelId: v.optional(v.string()),
     attachmentIds: v.optional(v.array(v.id("_storage"))),
   },
-  handler: async (ctx, { prompt, threadId, userId, modelId = "gpt-4.1-nano", attachmentIds = [] }) => {
+  handler: async (ctx, { prompt, threadId, userId, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [] }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
     const validatedThreadId = ThreadIdSchema.parse(threadId);
     const validatedUserId = z.string().parse(userId);
-    const validatedModelId = ModelIdSchema.parse(modelId);
+    const validatedModelId = ModelId.parse(modelId);
     
     // Get the local thread
     const localThread = await ctx.runQuery(internal.chatStreaming.getLocalThread, { threadId: validatedThreadId });
@@ -300,11 +278,11 @@ export const createAgentThreadAndSaveMessage = internalAction({
 
 export const streamResponse = internalAction({
   args: { promptMessageId: v.string(), threadId: v.string(), modelId: v.optional(v.string()) },
-  handler: async (ctx, { promptMessageId, threadId, modelId = "gpt-4.1-nano" }) => {
+  handler: async (ctx, { promptMessageId, threadId, modelId = DEFAULT_CHAT_MODEL }) => {
     // Validate inputs with Zod
     const validatedMessageId = z.string().parse(promptMessageId);
     const validatedThreadId = ThreadIdSchema.parse(threadId);
-    const validatedModelId = ModelIdSchema.parse(modelId);
+    const validatedModelId = ModelId.parse(modelId);
     
     // Create an agent with the specified model
     const agent = await createAgentWithModel(validatedModelId);
@@ -498,10 +476,10 @@ export const sendMessageAndUpdateThread = mutation({
     modelId: v.optional(v.string()),
     attachmentIds: v.optional(v.array(v.id("_storage"))),
   },
-  handler: async (ctx, { threadId, prompt, isFirstMessage, modelId = "gpt-4.1-nano", attachmentIds = [] }) => {
+  handler: async (ctx, { threadId, prompt, isFirstMessage, modelId = DEFAULT_CHAT_MODEL, attachmentIds = [] }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
-    const validatedModelId = ModelIdSchema.parse(modelId);
+    const validatedModelId = ModelId.parse(modelId);
     
     await authorizeThreadAccess(ctx, threadId);
     const userId = await getUserId(ctx);
@@ -554,36 +532,7 @@ export const getAvailableAgentsQuery = query({
   args: {},
   handler: async (ctx) => {
     // Return a simple static list instead of dynamic imports
-    return [
-      {
-        id: "chatAgent",
-        name: "Chat Assistant",
-        description: "General purpose conversational AI assistant",
-        capabilities: {
-          streaming: true,
-          vision: true,
-          reasoning: false,
-          webSearch: false,
-          codeAnalysis: false,
-        },
-        model: "gpt-4o-mini",
-        tools: ["sentimentAnalysis", "documentSummary"],
-      },
-      {
-        id: "fastAgent",
-        name: "Quick Assistant",
-        description: "Optimized for fast responses and quick interactions",
-        capabilities: {
-          streaming: true,
-          vision: false,
-          reasoning: false,
-          webSearch: false,
-          codeAnalysis: false,
-        },
-        model: "gpt-4o-mini",
-        tools: [],
-      },
-    ];
+    return getAvailableAgents();
   },
 });
 
@@ -600,7 +549,7 @@ export const sendMessageWithModel = mutation({
   handler: async (ctx, { threadId, prompt, modelId, isFirstMessage = false }) => {
     // Validate inputs with Zod
     const validatedPrompt = PromptSchema.parse(prompt);
-    const validatedModelId = ModelIdSchema.parse(modelId);
+    const validatedModelId = ModelId.parse(modelId);
     
     await authorizeThreadAccess(ctx, threadId);
     const userId = await getUserId(ctx);
@@ -645,9 +594,9 @@ export const getModelUsageStats = query({
       totalRequests: 1250,
       totalTokens: 125000,
       topModels: [
-        { model: "gpt-4o-mini", requests: 450, tokens: 45000 },
-        { model: "claude-3-5-sonnet-20241022", requests: 320, tokens: 38000 },
-        { model: "gpt-4o", requests: 280, tokens: 32000 },
+        { model: "gpt-4.1-nano", requests: 450, tokens: 45000 },
+        { model: "claude-4-sonnet-20250514", requests: 320, tokens: 38000 },
+        { model: "gpt-4.1", requests: 280, tokens: 32000 },
       ],
       costEstimate: 12.50,
       timeRange: validatedTimeRange,

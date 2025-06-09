@@ -66,31 +66,7 @@ export const getThreadByUuid = query({
   },
 });
 
-export const migrateThreadsWithUuids = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Not authenticated");
-    }
 
-    // Get all threads without UUIDs
-    const threadsWithoutUuids = await ctx.db
-      .query("threads")
-      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
-      .filter((q) => q.eq(q.field("uuid"), undefined))
-      .collect();
-
-    // Add UUIDs to threads that don't have them
-    for (const thread of threadsWithoutUuids) {
-      await ctx.db.patch(thread._id, {
-        uuid: uuidv4(),
-      });
-    }
-
-    return { migrated: threadsWithoutUuids.length };
-  },
-});
 
 export const createThread = mutation({
   args: {
