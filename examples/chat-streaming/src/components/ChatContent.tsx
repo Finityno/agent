@@ -31,7 +31,7 @@ import {
   useThreadMessages,
   toUIMessages,
   useSmoothText,
-} from "@convex-dev/agent/react"
+} from "../lib/agent-react"
 
 interface ChatContentProps {
   activeThreadId: Id<"threads"> | null;

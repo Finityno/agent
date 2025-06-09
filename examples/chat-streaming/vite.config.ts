@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    conditions: ['import', 'module', 'browser', 'default'],
   },
   server: {
     // Reduce logging verbosity
@@ -17,5 +18,18 @@ export default defineConfig({
     }
   },
   // Reduce build logging
-  logLevel: 'warn'
+  logLevel: 'warn',
+  optimizeDeps: {
+    include: ['@convex-dev/agent']
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        // Ensure proper chunking
+        manualChunks: {
+          'convex-agent': ['@convex-dev/agent']
+        }
+      }
+    }
+  }
 });
